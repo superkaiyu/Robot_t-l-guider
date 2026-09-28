@@ -1,0 +1,3 @@
+# Mots de passe WiFi personnels (voir robot/secrets_exemple.h)
+robot/secrets.h
+build/
