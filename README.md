@@ -146,8 +146,8 @@ Modifier `ihm/ihm.html`, puis `python tools/generer_ihm_h.py` et re-téléverser
 | **Position acquise** | Tout fonctionne | — |
 
 **Le tracé GPS bougeait tout seul, robot immobile ?** C'est normal pour un GPS : chaque mesure varie de 2 à 5 m dehors, et de 10 à 20 m en intérieur. Le robot filtre maintenant la position (`robot/gps_filtre.h`) :
-- **moteurs arrêtés et vitesse GPS faible** : la position est figée puis moyennée, et le trajet ne bouge plus ;
+- **moteurs arrêtés** : la position est moyennée pendant 30 s puis **figée**. Le trajet ne bouge plus, même si le GPS dérive de plusieurs dizaines de mètres (fréquent en intérieur) ou annonce une fausse vitesse de 1 à 3 km/h ;
 - **mesures imprécises (HDOP > 8) et sauts aberrants** : ignorés ;
-- **robot qui roule ou GPS porté à la main** : le trajet suit.
+- **robot qui roule (moteurs), ou GPS vraiment porté à la main** (plus de 3,5 km/h pendant 5 s et au moins 4 m parcourus) : le trajet suit.
 
 Dans l'onglet GPS, les points pâles montrent les mesures brutes (le bruit) ; la ligne est le trajet filtré.

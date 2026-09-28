@@ -695,7 +695,8 @@
             }
             if (data.gpsImmobile !== undefined) {
                 $('val-gps-mouvement').textContent = !fix ? '—' : data.gpsImmobile
-                    ? `immobile · position moyennée sur ${data.gpsMoyenne} mesure(s)` : 'en mouvement';
+                    ? (data.gpsFige ? `immobile · position figée (moyenne de ${data.gpsMoyenne} mesures)` : `immobile · moyenne en cours (${data.gpsMoyenne}/30 mesures)`)
+                    : 'en mouvement';
                 $('val-gps-precision').textContent = fix && data.gpsPrecision ? `± ${Number(data.gpsPrecision).toFixed(0)} m` : '—';
             }
             if (fix) {

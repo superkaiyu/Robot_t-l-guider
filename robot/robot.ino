@@ -633,6 +633,7 @@ void ajouterChampsGPS(String& t) {
   jsonChamp(t, "gpsLonBrute", filtreGps.pret() ? filtreGps.longitudeBrute() : mesLongitude, 6);
   jsonChampBool(t, "gpsImmobile", filtreGps.immobile());
   jsonChampInt(t, "gpsMoyenne", filtreGps.mesuresMoyennees());
+  jsonChampBool(t, "gpsFige", filtreGps.fige());
   jsonChamp(t, "gpsPrecision", filtreGps.pret() ? filtreGps.precisionM() : 0, 1);
   jsonChampInt(t, "gpsSatellites", gpsSatellites);
   jsonChampInt(t, "gpsSatellitesVisibles", gpsSatellitesVisibles);
