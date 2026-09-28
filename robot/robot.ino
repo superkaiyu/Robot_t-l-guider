@@ -63,6 +63,7 @@
 #include <TinyGPSPlus.h>
 #include <Preferences.h>
 #include "gps_detection.h" // détection automatique de la broche et de la vitesse du GPS
+#include "gps_filtre.h"    // filtre : la position ne "bouge" plus quand le robot est immobile
 #include "ihm_html.h"    // page de l'IHM compressée (générée depuis ihm/ihm.html, voir README)
 #include "ws_serveur.h"  // mini serveur WebSocket (aucune bibliothèque à installer)
 
@@ -154,6 +155,9 @@ bool detectionGpsVisible = true;      // false pendant les nouveaux essais silen
 bool gpsDernierResultatIllisible = false;
 bool echoNmea = false;                // "g" dans le Moniteur Série : affiche les trames brutes du GPS
 const unsigned long SILENCE_AVANT_REDETECTION_MS = 5000;
+FiltreGps filtreGps;
+unsigned long derniereCommandeMoteurMs = 0; // pour savoir si le robot roule (filtre GPS)
+bool moteursDejaActifs = false;
 const unsigned long INTERVALLE_REDETECTION_MS = 10000;
 // Nombre de satellites VISIBLES (trames GSV), par constellation — utile en intérieur
 // pour voir que le module "entend" quelques satellites même sans position.
@@ -288,6 +292,15 @@ void appliquerCommandes(int pwrRoueG, int pwrRoueD) {
   appliquerMoteur(pwrRoueD, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR);
   dernierPwrRoueG = pwrRoueG;
   dernierPwrRoueD = pwrRoueD;
+  if (pwrRoueG != 0 || pwrRoueD != 0) {
+    derniereCommandeMoteurMs = millis();
+    moteursDejaActifs = true;
+  }
+}
+
+// Vrai si les moteurs tournent ou tournaient il y a moins de 2 s (le robot peut encore rouler sur sa lancée)
+bool robotEnMouvement() {
+  return dernierPwrRoueG != 0 || dernierPwrRoueD != 0 || (moteursDejaActifs && millis() - derniereCommandeMoteurMs < 2000);
 }
 
 // =========================================================
@@ -502,10 +515,16 @@ void lireGPS() {
   bool trouve = detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE;
   bool moduleQuiParle = trouve && millis() - dernierCaractereGpsMs < 2000;
 
-  gpsFixValide = moduleQuiParle && gps.location.isValid() && gps.location.age() < 3000;
+  bool fixBrut = moduleQuiParle && gps.location.isValid() && gps.location.age() < 3000;
+  if (fixBrut && gps.location.isUpdated()) { // nouvelle mesure (1 par seconde en général) -> filtre
+    filtreGps.ajouter(gps.location.lat(), gps.location.lng(), gps.hdop.isValid() ? gps.hdop.hdop() : 99.0f,
+                      gps.satellites.isValid() ? (int)gps.satellites.value() : 0,
+                      gps.speed.isValid() ? gps.speed.kmph() : 0.0f, robotEnMouvement());
+  }
+  gpsFixValide = fixBrut && filtreGps.pret();
   if (gpsFixValide) {
-    mesLatitude = gps.location.lat();
-    mesLongitude = gps.location.lng();
+    mesLatitude = filtreGps.lat(); // position FILTRÉE : c'est elle qu'on envoie à l'IHM et à la Manette
+    mesLongitude = filtreGps.lon();
     gpsDejaFixe = true;
   }
   gpsSatellites = (gps.satellites.isValid() && gps.satellites.age() < 5000) ? gps.satellites.value() : 0;
@@ -610,6 +629,11 @@ void ajouterChampsGPS(String& t) {
   jsonChampBool(t, "gpsDejaFixe", gpsDejaFixe);
   jsonChamp(t, "gpsLat", mesLatitude, 6);
   jsonChamp(t, "gpsLon", mesLongitude, 6);
+  jsonChamp(t, "gpsLatBrute", filtreGps.pret() ? filtreGps.latitudeBrute() : mesLatitude, 6);
+  jsonChamp(t, "gpsLonBrute", filtreGps.pret() ? filtreGps.longitudeBrute() : mesLongitude, 6);
+  jsonChampBool(t, "gpsImmobile", filtreGps.immobile());
+  jsonChampInt(t, "gpsMoyenne", filtreGps.mesuresMoyennees());
+  jsonChamp(t, "gpsPrecision", filtreGps.pret() ? filtreGps.precisionM() : 0, 1);
   jsonChampInt(t, "gpsSatellites", gpsSatellites);
   jsonChampInt(t, "gpsSatellitesVisibles", gpsSatellitesVisibles);
   jsonChamp(t, "gpsAltitude", gpsAltitude, 1);

@@ -328,6 +328,8 @@
                     <div>Branché sur : <b id="val-gps-broche">—</b></div>
                     <div title="Plus la valeur est basse, plus la position est précise (&lt; 2 = bon)">Précision (HDOP) : <b id="val-gps-hdop">—</b></div>
                     <div>Cap : <b id="val-gps-cap">—</b></div>
+                    <div>Mouvement : <b id="val-gps-mouvement">—</b></div>
+                    <div title="Écart typique d'une mesure seule (HDOP × 2,5 m)">Précision d'une mesure : <b id="val-gps-precision">—</b></div>
                     <div>Heure UTC : <b id="val-gps-heure">—</b></div>
                     <div>Caractères reçus : <b class="num" id="val-gps-caracteres">0</b></div>
                     <div>Trames valides / erronées : <b class="num" id="val-gps-trames">0 / 0</b></div>
@@ -346,6 +348,7 @@
                     <div class="section-titre"><h2>Trajet GPS</h2><button class="btn" id="btn-reset-trace-gps">Réinitialiser</button></div>
                     <canvas id="traceGpsCanvas" class="trace-canvas" width="900" height="420"></canvas>
                     <div class="trace-scale-label num" id="trace-gps-label">En attente d'une position GPS...</div>
+                    <div class="trace-scale-label">Ligne = trajet filtré par le robot · points pâles = mesures brutes du GPS (elles varient toujours de quelques mètres, même immobile : c'est normal)</div>
                 </div>
             </div>
 
@@ -636,7 +639,8 @@
                             note: 'Le robot reçoit des données du GPS mais ne peut pas les décoder : vérifier la vitesse série (9600 bauds par défaut pour l’Air530) et le fil de masse commun.' },
         };
 
-        let gpsOrigine = null, gpsChemin = [], gpsDernier = null, gpsDistance = 0, gpsCapRad = null;
+        let gpsOrigine = null, gpsChemin = [], gpsDernier = null, gpsCourant = null, gpsNuage = [], gpsDistance = 0, gpsCapRad = null;
+        const MAX_POINTS_NUAGE = 120; // 2 dernières minutes de mesures brutes
         let carteDernierePos = null, gpsDernierEtatAffiche = null;
         const MAX_POINTS_GPS = 2000;
 
@@ -689,8 +693,14 @@
                 $('lien-osm').href = `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=19/${lat}/${lon}`;
                 $('lien-gmaps').href = `https://www.google.com/maps?q=${lat},${lon}`;
             }
+            if (data.gpsImmobile !== undefined) {
+                $('val-gps-mouvement').textContent = !fix ? '—' : data.gpsImmobile
+                    ? `immobile · position moyennée sur ${data.gpsMoyenne} mesure(s)` : 'en mouvement';
+                $('val-gps-precision').textContent = fix && data.gpsPrecision ? `± ${Number(data.gpsPrecision).toFixed(0)} m` : '—';
+            }
             if (fix) {
-                ajouterPointGPS(lat, lon, Number(data.gpsVitesseKmh) || 0, Number(data.gpsCap) || 0);
+                const brute = data.gpsLatBrute !== undefined ? { lat: Number(data.gpsLatBrute), lon: Number(data.gpsLonBrute) } : null;
+                ajouterPointGPS(lat, lon, Number(data.gpsVitesseKmh) || 0, Number(data.gpsCap) || 0, data.gpsImmobile, brute);
                 mettreAJourCarte(lat, lon);
             }
         }
@@ -702,19 +712,29 @@
             $('note-gps').textContent = 'Connectez-vous au robot pour recevoir la position GPS.';
         }
 
-        function ajouterPointGPS(lat, lon, vitesseKmh, capDeg) {
+        // La position reçue est déjà FILTRÉE par le robot (gps_filtre.h) : immobile, elle ne bouge plus.
+        // On n'ajoute un point au trajet que si le robot bouge vraiment.
+        function ajouterPointGPS(lat, lon, vitesseKmh, capDeg, immobile, brute) {
             if (!gpsOrigine) gpsOrigine = { lat, lon };
             const p = metresDepuisOrigine(lat, lon);
-            if (!gpsDernier || Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y) > 1.0) { // filtre le bruit GPS (~1 m)
+            if (brute && brute.lat) {
+                const b = metresDepuisOrigine(brute.lat, brute.lon);
+                const d = gpsNuage[gpsNuage.length - 1];
+                if (!d || d.x !== b.x || d.y !== b.y) { gpsNuage.push(b); if (gpsNuage.length > MAX_POINTS_NUAGE) gpsNuage.shift(); }
+            }
+            gpsCourant = p;
+            // Ancien firmware (sans filtre) : seuil plus large pour ne pas dessiner le bruit
+            const seuil = immobile === undefined ? 5.0 : 2.0;
+            if (!gpsDernier || (immobile !== true && Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y) > seuil)) {
                 if (gpsDernier) gpsDistance += Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y);
                 gpsChemin.push(p); if (gpsChemin.length > MAX_POINTS_GPS) gpsChemin.shift();
                 gpsDernier = p;
-                gpsCapRad = vitesseKmh > 1 ? (90 - capDeg) * Math.PI / 180 : null; // cap GPS : 0° = nord, sens horaire
-                dessinerTraceGPS();
             }
+            gpsCapRad = immobile !== true && vitesseKmh > 2 ? (90 - capDeg) * Math.PI / 180 : null; // cap GPS : 0° = nord, sens horaire
+            dessinerTraceGPS();
         }
 
-        function reinitialiserTraceGPS() { gpsOrigine = null; gpsChemin = []; gpsDernier = null; gpsDistance = 0; gpsCapRad = null; dessinerTraceGPS(); }
+        function reinitialiserTraceGPS() { gpsOrigine = null; gpsChemin = []; gpsDernier = null; gpsCourant = null; gpsNuage = []; gpsDistance = 0; gpsCapRad = null; dessinerTraceGPS(); }
         $('btn-reset-trace-gps').addEventListener('click', reinitialiserTraceGPS);
 
         const chkCarte = $('chk-carte'), gpsCarte = $('gps-carte');
@@ -954,11 +974,12 @@
         }
 
         // Dessine un chemin (coordonnées en mètres) centré et mis à l'échelle dans le canvas.
-        function dessinerChemin(canvas, points, courant, headingRad, couleur) {
+        function dessinerChemin(canvas, points, courant, headingRad, couleur, nuage = []) {
             const ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
             ctx.fillStyle = '#0b0e1c'; ctx.fillRect(0, 0, w, h);
             const marge = 0.5;
-            const xs = points.map(p => p.x).concat([0, courant.x]), ys = points.map(p => p.y).concat([0, courant.y]);
+            const tous = points.concat(nuage);
+            const xs = tous.map(p => p.x).concat([0, courant.x]), ys = tous.map(p => p.y).concat([0, courant.y]);
             const minX = Math.min(...xs) - marge, maxX = Math.max(...xs) + marge;
             const minY = Math.min(...ys) - marge, maxY = Math.max(...ys) + marge;
             const rangeX = Math.max(maxX - minX, 1), rangeY = Math.max(maxY - minY, 1), scale = Math.min(w / rangeX, h / rangeY);
@@ -969,6 +990,8 @@
             ctx.strokeStyle = 'rgba(140,147,184,0.1)'; ctx.lineWidth = 1;
             for (let gx = Math.ceil(x0 / pas) * pas; gx <= x1; gx += pas) { const p1 = toScreen(gx, y0), p2 = toScreen(gx, y1); ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke(); }
             for (let gy = Math.ceil(y0 / pas) * pas; gy <= y1; gy += pas) { const p1 = toScreen(x0, gy), p2 = toScreen(x1, gy); ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke(); }
+            ctx.fillStyle = 'rgba(163,230,53,0.28)'; // mesures brutes (bruit du GPS)
+            nuage.forEach(p => { const { sx, sy } = toScreen(p.x, p.y); ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI); ctx.fill(); });
             ctx.strokeStyle = couleur; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.shadowColor = couleur; ctx.shadowBlur = 8; ctx.beginPath();
             points.forEach((p, i) => { const { sx, sy } = toScreen(p.x, p.y); if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); }); ctx.stroke();
             ctx.shadowBlur = 0;
@@ -1008,8 +1031,9 @@
                 $('trace-gps-label').textContent = 'En attente d’une position GPS...';
                 return;
             }
-            dessinerChemin(traceGpsCanvas, gpsChemin, gpsDernier, gpsCapRad, '#a3e635');
-            $('trace-gps-label').textContent = `Départ : ${gpsOrigine.lat.toFixed(6)}, ${gpsOrigine.lon.toFixed(6)} — écart : ${gpsDernier.x.toFixed(1)} m (est), ${gpsDernier.y.toFixed(1)} m (nord) — parcouru : ${gpsDistance.toFixed(1)} m`;
+            const c = gpsCourant || gpsDernier;
+            dessinerChemin(traceGpsCanvas, gpsChemin, c, gpsCapRad, '#a3e635', gpsNuage);
+            $('trace-gps-label').textContent = `Départ : ${gpsOrigine.lat.toFixed(6)}, ${gpsOrigine.lon.toFixed(6)} — écart : ${c.x.toFixed(1)} m (est), ${c.y.toFixed(1)} m (nord) — parcouru : ${gpsDistance.toFixed(1)} m`;
         }
 
         $('cmd-stop-global').addEventListener('click', envoyerArretUrgence);
