@@ -48,6 +48,15 @@ FQBN_DEFAUT = "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc"
 VID_CONNUS = {0x303A: "ESP32 USB natif", 0x10C4: "CP210x", 0x1A86: "CH340"}
 SKETCHS = {"robot": RACINE / "robot", "manette": RACINE / "manette"}
 NOMS = {"robot": "ROBOT", "manette": "MANETTE"}
+INFOS_GPS = {}  # port -> texte décrivant le GPS du robot (rempli par interroger())
+ETATS_GPS = {
+    "detection": "détection du module en cours",
+    "absent": "AUCUN module GPS trouvé (vérifier le câblage)",
+    "illisible": "données reçues mais illisibles (GND commun ? vitesse ?)",
+    "recherche": "module OK, recherche des satellites",
+    "fix": "position acquise",
+    "simulation": "simulation (GPS_SIMULATION = 1)",
+}
 
 
 # ------------------------------------------------------------------ pyserial
@@ -109,14 +118,28 @@ def interroger(serial, port, attente=3.0):
                 s.write(b"?\n")
                 dernier_envoi = time.time()
             recu += s.read(512)
-            m = re.search(rb"ID=(ROBOT|MANETTE)", recu)
+            # Ligne complète : "ID=ROBOT GPS=recherche,D7,9600" (le robot décrit aussi son GPS)
+            m = re.search(rb"ID=(ROBOT|MANETTE)([^\r\n]*)[\r\n]", recu)
             if m:
+                noter_infos_gps(port, m.group(2).decode(errors="replace"))
                 return m.group(1).decode().lower()
-        return None
+        m = re.search(rb"ID=(ROBOT|MANETTE)", recu)
+        return m.group(1).decode().lower() if m else None
     except (serial.SerialException, OSError):
         return None
     finally:
         s.close()
+
+
+def noter_infos_gps(port, suite):
+    m = re.search(r"GPS=(\w+),([^,\s]+),(\d+)", suite)
+    if not m:
+        return
+    etat, broche, bauds = m.groups()
+    texte = "GPS : " + ETATS_GPS.get(etat, etat)
+    if broche != "-":
+        texte += f" — branché sur {broche} à {bauds} bauds"
+    INFOS_GPS[port] = texte
 
 
 def identifier(serial, cfg):
@@ -147,6 +170,8 @@ def afficher(cartes):
     for p, role, origine in cartes:
         nom = NOMS.get(role, "?")
         print(f"  {p.device:<14} {nom:<8} ({origine})  n° série {p.serial_number or '-'}")
+        if p.device in INFOS_GPS:
+            print(f"  {'':<14} {INFOS_GPS[p.device]}")
 
 
 def demander(question, choix):

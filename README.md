@@ -50,6 +50,14 @@
 
 Le fil RX du GPS n'est pas utilisé (lecture seule).
 
+**Détection automatique du GPS** : au démarrage, l'ESP32 Robot (celui **sans** joystick) cherche tout seul sur quelle broche arrive le fil TX du GPS (**D7**, puis D6, D2, D10) et à quelle vitesse il parle (9600, 115200, 38400, 57600, 19200, 4800 bauds). Il vérifie que ce sont de vraies trames GPS (NMEA avec somme de contrôle), puis retient la combinaison trouvée pour le démarrage suivant. Si le GPS est débranché puis rebranché, il le retrouve (nouvel essai toutes les 10 s). Le résultat s'affiche :
+
+- dans le Moniteur Série du robot : `[GPS] ✅ Module GPS détecté sur D7 (GPIO44) à 9600 bauds.` ;
+- dans l'IHM, onglet **GPS** (« Branché sur : D7 (GPIO44) · 9600 bauds »), avec un bouton **Relancer la détection du GPS** ;
+- avec `lister_esp32.bat` : `COM5  ROBOT … GPS : module OK, recherche des satellites — branché sur D7 à 9600 bauds`.
+
+Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection.
+
 **ESP32 Manette**
 
 | Élément | Broche XIAO | GPIO |
@@ -121,7 +129,7 @@ Une source au repos ne bloque jamais les autres. Sans commande fraîche depuis 5
 | Robot → Manette | `OK;pilote=...;gps=...;fix=0/1;lat=...;lon=...;sat=...` |
 | IHM → Robot (WebSocket 81) | `c,<rg>,<rd>` commande · `stop` arrêt d'urgence · `p,<n>` ping |
 | Robot → IHM | JSON de télémétrie 20×/s · `P,<n>` réponse au ping |
-| HTTP (secours / outils) | `/` IHM · `/cmd?src=ihm&rg=..&rd=..[&stop=1]` · `/telemetrie` · `/gps` · `/wifiup` · `/aide` |
+| HTTP (secours / outils) | `/` IHM · `/cmd?src=ihm&rg=..&rd=..[&stop=1]` · `/telemetrie` · `/gps` · `/gps-detecter` · `/wifiup` · `/aide` |
 
 ## Modifier l'IHM
 
@@ -131,7 +139,8 @@ Modifier `ihm/ihm.html`, puis `python tools/generer_ihm_h.py` et re-téléverser
 
 | L'IHM affiche | Signification | Que faire |
 |---|---|---|
-| **Module non détecté** | Le robot ne reçoit aucun caractère du GPS | Vérifier GPS TX → D7, VCC → 3V3, GND commun |
-| **Données illisibles** | Des caractères arrivent mais ne forment pas de trames NMEA valides | Vitesse série (9600 bauds pour l'Air530), masse commune |
+| **Détection du module…** | Le robot essaie les broches / vitesses une par une | Attendre quelques secondes |
+| **Module non détecté** | Rien reçu sur D7, D6, D2, D10, à aucune vitesse | Vérifier le fil TX du GPS (sur l'ESP32 **sans** joystick), VCC → 3V3 (ou 5V selon le module), GND commun, LED du module allumée |
+| **Données illisibles** | Des caractères arrivent mais ne forment jamais de trames NMEA valides | Masse (GND) commune, vitesse du module inhabituelle |
 | **Recherche · N satellites entendus** | Câblage OK, le module communique, pas encore de position | Aller dehors / près d'une fenêtre, attendre 1 à 5 min au premier démarrage |
 | **Position acquise** | Tout fonctionne | — |

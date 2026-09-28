@@ -241,7 +241,9 @@ void afficherEtat(int x, int y, bool bouton, int pwrG, int pwrD) {
     Serial.printf("%.6f, %.6f (%d satellites)%s\n", infosRobot.latitude, infosRobot.longitude, infosRobot.satellites,
                   infosRobot.gpsEtat == "simulation" ? " [SIMULATION]" : "");
   } else if (infosRobot.gpsEtat == "absent") {
-    Serial.println("module non détecté sur le robot (câblage ?)");
+    Serial.println("aucun module GPS trouvé sur le robot (câblage ?)");
+  } else if (infosRobot.gpsEtat == "detection") {
+    Serial.println("le robot cherche son module GPS (broche / vitesse)...");
   } else {
     Serial.printf("recherche des satellites... (état : %s)\n", infosRobot.gpsEtat.c_str());
   }

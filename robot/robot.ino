@@ -9,7 +9,8 @@
         - l'ESP32 "Manette" (joystick sur breadboard) s'y connecte,
         - le PC / téléphone (IHM) s'y connecte aussi.
      En option, il rejoint EN PLUS un réseau existant (voir secrets.h).
-  2. Lit le module GPS Air530 branché en UART (fil TX du GPS -> D7/GPIO44)
+  2. DÉTECTE puis lit le module GPS Air530 branché en UART (fil TX du GPS -> D7
+     conseillé ; D6, D2, D10 et les vitesses courantes sont trouvés automatiquement)
      et diffuse la position en WiFi à l'IHM et à la Manette.
   3. Reçoit les commandes de déplacement (Manette et/ou IHM) et pilote 2 moteurs DC.
   4. Sert l'IHM directement : ouvrir http://192.168.4.1 dans un navigateur suffit
@@ -60,6 +61,8 @@
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <TinyGPSPlus.h>
+#include <Preferences.h>
+#include "gps_detection.h" // détection automatique de la broche et de la vitesse du GPS
 #include "ihm_html.h"    // page de l'IHM compressée (générée depuis ihm/ihm.html, voir README)
 #include "ws_serveur.h"  // mini serveur WebSocket (aucune bibliothèque à installer)
 
@@ -131,12 +134,27 @@ const int JOYSTICK_CENTRE = 2048;    // valeur ADC au repos (12 bits, 0-4095), �
 const int JOYSTICK_ZONE_MORTE = 300; // en dessous, on considère le stick au repos
 
 // --- GPS Air530 ---
-// Câblage : GPS TX -> D7 (GPIO44) ; GPS VCC -> 3V3 ; GPS GND -> GND.
+// Câblage conseillé : GPS TX -> D7 (GPIO44) ; GPS VCC -> 3V3 ; GPS GND -> GND.
 // On ne fait que LIRE la position : une seule broche de données suffit.
-const int PIN_GPS_RX = 44;
-const unsigned long GPS_BAUDS = 9600; // vitesse par défaut de l'Air530
-HardwareSerial gpsSerial(1); // UART matériel n°1 de l'ESP32, remappé sur PIN_GPS_RX
+// DÉTECTION AUTOMATIQUE (gps_detection.h) : si le fil TX du GPS est sur une autre broche
+// libre (D6, D2, D10) ou si le module parle à une autre vitesse (115200, 38400...),
+// le robot le trouve tout seul et s'en souvient pour le démarrage suivant.
+HardwareSerial gpsSerial(1); // UART matériel n°1 de l'ESP32, remappé sur la broche trouvée
 TinyGPSPlus gps;
+#if JOYSTICK_LOCAL
+const DetecteurGps<HardwareSerial>::Broche BROCHES_GPS[] = { { 44, "D7" } }; // D2, D6, D10 : pris par le joystick local
+#else
+const DetecteurGps<HardwareSerial>::Broche BROCHES_GPS[] = { { 44, "D7" }, { 43, "D6" }, { 3, "D2" }, { 9, "D10" } };
+#endif
+const unsigned long BAUDS_GPS[] = { 9600, 115200, 38400, 57600, 19200, 4800 };
+DetecteurGps<HardwareSerial> detecteurGps(gpsSerial, BROCHES_GPS, sizeof(BROCHES_GPS) / sizeof(BROCHES_GPS[0]),
+                                          BAUDS_GPS, sizeof(BAUDS_GPS) / sizeof(BAUDS_GPS[0]));
+Preferences memoireGps;               // broche/vitesse trouvées, gardées en mémoire flash
+bool detectionGpsVisible = true;      // false pendant les nouveaux essais silencieux (GPS absent)
+bool gpsDernierResultatIllisible = false;
+bool echoNmea = false;                // "g" dans le Moniteur Série : affiche les trames brutes du GPS
+const unsigned long SILENCE_AVANT_REDETECTION_MS = 5000;
+const unsigned long INTERVALLE_REDETECTION_MS = 10000;
 // Nombre de satellites VISIBLES (trames GSV), par constellation — utile en intérieur
 // pour voir que le module "entend" quelques satellites même sans position.
 TinyGPSCustom gsvGPS(gps, "GPGSV", 3);
@@ -220,7 +238,7 @@ int gpsSatellitesVisibles = 0;  // satellites entendus (trames GSV)
 float gpsAltitude = 0, gpsVitesseKmh = 0, gpsCap = 0, gpsHdop = 0;
 char gpsHeureUTC[12] = "--:--:--";
 unsigned long dernierCaractereGpsMs = 0;
-const char* gpsEtat = "absent";  // absent | illisible | recherche | fix | simulation
+const char* gpsEtat = "detection";  // detection | absent | illisible | recherche | fix | simulation
 
 // --- WiFi externe (STA) ---
 enum EtatSTA { STA_INACTIF, STA_CONNEXION, STA_CONNECTE, STA_ABANDON };
@@ -394,11 +412,77 @@ int lireSatellitesVisibles(TinyGPSCustom& champ) {
   return atoi(champ.value());
 }
 
+String listeBrochesGps() {
+  String l;
+  for (size_t i = 0; i < sizeof(BROCHES_GPS) / sizeof(BROCHES_GPS[0]); i++) {
+    if (i) l += ", ";
+    l += BROCHES_GPS[i].nom;
+  }
+  return l;
+}
+
+String descriptionBrocheGps() {
+  if (detecteurGps.etat() != DetecteurGps<HardwareSerial>::TROUVE) return "";
+  return String(detecteurGps.nomBroche()) + " (GPIO" + String(detecteurGps.gpio()) + ")";
+}
+
+void lancerDetectionGps(const char* raison, bool visible) {
+  detectionGpsVisible = visible;
+  if (visible) {
+    Serial.printf("[GPS] Détection automatique du module (%s) : broches %s, vitesses 9600..115200 bauds...\n",
+                  raison, listeBrochesGps().c_str());
+  }
+  // La dernière combinaison qui a marché est essayée en premier : détection quasi instantanée.
+  detecteurGps.demarrer(memoireGps.getInt("gpio", -1), memoireGps.getULong("bauds", 0));
+}
+
+// À appeler à chaque tour de loop() (après lireGPS) : fait avancer la détection sans bloquer.
+void gererDetectionGps() {
+  static DetecteurGps<HardwareSerial>::Etat etatPrecedent = DetecteurGps<HardwareSerial>::EN_COURS;
+  detecteurGps.mettreAJour();
+  DetecteurGps<HardwareSerial>::Etat etat = detecteurGps.etat();
+
+  if (detecteurGps.vientDeTrouver()) {
+    Serial.printf("[GPS] ✅ Module GPS détecté sur %s à %lu bauds.\n", descriptionBrocheGps().c_str(), detecteurGps.vitesse());
+    if (detecteurGps.gpio() != 44) Serial.println("[GPS] (Ce n'est pas D7, mais ça fonctionne : rien à changer.)");
+    if (memoireGps.getInt("gpio", -1) != detecteurGps.gpio() || memoireGps.getULong("bauds", 0) != detecteurGps.vitesse()) {
+      memoireGps.putInt("gpio", detecteurGps.gpio());
+      memoireGps.putULong("bauds", detecteurGps.vitesse());
+    }
+    gpsDernierResultatIllisible = false;
+    declencherClignotement(3);
+  }
+
+  if (etat == DetecteurGps<HardwareSerial>::INTROUVABLE && etatPrecedent != DetecteurGps<HardwareSerial>::INTROUVABLE) {
+    gpsDernierResultatIllisible = detecteurGps.illisible();
+    if (detectionGpsVisible) {
+      if (gpsDernierResultatIllisible) {
+        Serial.println("[GPS] ⚠️ Des données arrivent mais ne sont pas des trames GPS valides : vérifier le fil GND commun "
+                       "et la vitesse du module. Nouvel essai toutes les 10 s.");
+      } else {
+        Serial.printf("[GPS] ❌ Aucun GPS trouvé (broches %s, toutes vitesses). Vérifier : fil TX du GPS -> D7, "
+                      "VCC -> 3V3 (ou 5V selon le module), GND -> GND. Nouvel essai toutes les 10 s.\n", listeBrochesGps().c_str());
+      }
+    }
+  }
+  etatPrecedent = etat;
+
+  if (etat == DetecteurGps<HardwareSerial>::TROUVE && millis() - dernierCaractereGpsMs > SILENCE_AVANT_REDETECTION_MS) {
+    Serial.println("[GPS] Le module ne répond plus (débranché ?) : nouvelle recherche...");
+    lancerDetectionGps("GPS muet", false);
+  } else if (etat == DetecteurGps<HardwareSerial>::INTROUVABLE && detecteurGps.depuisFinMs() > INTERVALLE_REDETECTION_MS) {
+    lancerDetectionGps("nouvel essai", false); // silencieux : le GPS peut être branché à chaud
+  }
+}
+
 // À appeler à chaque tour de loop() : fait avancer le décodage NMEA sans jamais bloquer.
 void lireGPS() {
   while (gpsSerial.available() > 0) {
-    gps.encode(gpsSerial.read());
+    char c = gpsSerial.read();
+    gps.encode(c);
+    detecteurGps.caractereRecu(c);
     dernierCaractereGpsMs = millis();
+    if (echoNmea && detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE) Serial.write(c);
   }
 
 #if GPS_SIMULATION
@@ -415,7 +499,8 @@ void lireGPS() {
   gpsHdop = 0.9;
   gpsEtat = "simulation";
 #else
-  bool moduleQuiParle = gps.charsProcessed() > 0 && millis() - dernierCaractereGpsMs < 2000;
+  bool trouve = detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE;
+  bool moduleQuiParle = trouve && millis() - dernierCaractereGpsMs < 2000;
 
   gpsFixValide = moduleQuiParle && gps.location.isValid() && gps.location.age() < 3000;
   if (gpsFixValide) {
@@ -435,8 +520,9 @@ void lireGPS() {
     snprintf(gpsHeureUTC, sizeof(gpsHeureUTC), "%02d:%02d:%02d", gps.time.hour(), gps.time.minute(), gps.time.second());
   }
 
-  if (!moduleQuiParle) gpsEtat = "absent";
-  else if (gps.passedChecksum() == 0 && gps.charsProcessed() > 1000) gpsEtat = "illisible"; // souvent : mauvaise vitesse série
+  if (detecteurGps.etat() == DetecteurGps<HardwareSerial>::EN_COURS && detectionGpsVisible) gpsEtat = "detection";
+  else if (!trouve) gpsEtat = gpsDernierResultatIllisible ? "illisible" : "absent";
+  else if (!moduleQuiParle) gpsEtat = "absent";
   else if (gpsFixValide) gpsEtat = "fix";
   else gpsEtat = "recherche";
 #endif
@@ -446,14 +532,15 @@ void afficherEtatGpsSerie() {
   static unsigned long dernierAffichageMs = 0;
   if (millis() - dernierAffichageMs < 5000) return;
   dernierAffichageMs = millis();
-  Serial.printf("[GPS] etat=%s  caracteres=%lu  trames OK/KO=%lu/%lu  satellites utilises/visibles=%d/%d",
-                gpsEtat, (unsigned long)gps.charsProcessed(), (unsigned long)gps.passedChecksum(),
-                (unsigned long)gps.failedChecksum(), gpsSatellites, gpsSatellitesVisibles);
+  if (strcmp(gpsEtat, "detection") == 0) return; // la détection affiche ses propres messages
+  Serial.printf("[GPS] etat=%s", gpsEtat);
+  if (detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE) {
+    Serial.printf("  branché sur %s à %lu bauds", descriptionBrocheGps().c_str(), detecteurGps.vitesse());
+  }
+  Serial.printf("  trames OK/KO=%lu/%lu  satellites utilises/visibles=%d/%d",
+                (unsigned long)gps.passedChecksum(), (unsigned long)gps.failedChecksum(), gpsSatellites, gpsSatellitesVisibles);
   if (gpsFixValide) Serial.printf("  position=%.6f, %.6f", mesLatitude, mesLongitude);
   Serial.println();
-  if (strcmp(gpsEtat, "absent") == 0) {
-    Serial.println("[GPS] Aucune donnée reçue : vérifier GPS TX -> D7 (GPIO44), VCC -> 3V3, GND -> GND.");
-  }
 }
 
 // =========================================================
@@ -533,6 +620,12 @@ void ajouterChampsGPS(String& t) {
   jsonChampInt(t, "gpsCaracteres", (long)gps.charsProcessed());
   jsonChampInt(t, "gpsTramesOk", (long)gps.passedChecksum());
   jsonChampInt(t, "gpsTramesKo", (long)gps.failedChecksum());
+  jsonChampTexte(t, "gpsBroche", descriptionBrocheGps());
+  jsonChampInt(t, "gpsBauds", (long)detecteurGps.vitesse());
+  jsonChampTexte(t, "gpsBrochesTestees", listeBrochesGps());
+  char essai[48] = "";
+  if (detecteurGps.etat() == DetecteurGps<HardwareSerial>::EN_COURS) detecteurGps.decrireEssai(essai, sizeof(essai));
+  jsonChampTexte(t, "gpsEssai", essai);
 }
 
 // Commande reçue de l'ESP32 Manette (par UDP, ou par HTTP pour les anciennes versions)
@@ -662,6 +755,8 @@ void surMessageWs(uint8_t client, char* message, size_t longueur) {
     int rd = suite ? atoi(suite) : 0;
     enregistrerCommande(cmdIhm, rg, rd);
     mettreAJourPilotage();
+  } else if (strcmp(message, "gpsdetect") == 0) {
+    lancerDetectionGps("demandée depuis l'IHM", true);
   } else if (strcmp(message, "stop") == 0) {
     enregistrerCommande(cmdIhm, 0, 0);
     declencherArretUrgence(DUREE_ARRET_IHM_MS);
@@ -691,14 +786,28 @@ void diffuserTelemetrieWs() {
 // =========================================================
 // IDENTIFICATION SUR LE PORT USB
 // =========================================================
+// Commandes du Moniteur Série :  ?  identité + état du GPS   g  trames GPS brutes (marche/arrêt)
+//                                 d  relancer la détection du GPS
 void repondreIdentification() {
   while (Serial.available() > 0) {
     int c = Serial.read();
     if (c == '?') {
-      Serial.print("ID=");
-      Serial.println(IDENTITE);
+      Serial.printf("ID=%s GPS=%s,%s,%lu\n", IDENTITE, gpsEtat,
+                    detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE ? detecteurGps.nomBroche() : "-", detecteurGps.vitesse());
+    } else if (c == 'g') {
+      echoNmea = !echoNmea;
+      Serial.println(echoNmea ? "[GPS] Affichage des trames brutes : MARCHE (g pour arrêter)" : "[GPS] Affichage des trames brutes : ARRÊT");
+    } else if (c == 'd') {
+      lancerDetectionGps("demandée depuis le Moniteur Série", true);
     }
   }
+}
+
+// Relance la détection du GPS (bouton de l'IHM en mode HTTP de secours)
+void handleGpsDetecter() {
+  lancerDetectionGps("demandée depuis l'IHM", true);
+  ajouterEnTetesCORS();
+  server.send(200, "text/plain", "OK");
 }
 
 // Position GPS seule (pratique pour un téléphone ou un autre appareil)
@@ -809,7 +918,7 @@ void handleRacine() {
 void handleAide() {
   ajouterEnTetesCORS();
   server.send(200, "text/plain; charset=utf-8",
-              "Robot ESP32 OK. Routes : /  (IHM)   /cmd?src=ihm&rg=0&rd=0   /telemetrie   /gps   /wifiup (portail WIFI-UP)\n"
+              "Robot ESP32 OK. Routes : /  (IHM)   /cmd?src=ihm&rg=0&rd=0   /telemetrie   /gps   /gps-detecter   /wifiup (portail WIFI-UP)\n"
               "Temps réel : WebSocket ws://<ip>:81/  et  UDP port 4210 (Manette)");
 }
 
@@ -923,8 +1032,9 @@ void setup() {
   pinMode(PIN_JOYSTICK_SW, INPUT_PULLUP);
 #endif
 
-  gpsSerial.setRxBufferSize(1024); // marge si la boucle est occupée (ex : envoi de la page IHM)
-  gpsSerial.begin(GPS_BAUDS, SERIAL_8N1, PIN_GPS_RX, -1); // RX=GPIO44, pas de TX (lecture seule)
+  Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS");
+  memoireGps.begin("gps", false);
+  lancerDetectionGps("démarrage", true); // ouvre l'UART du GPS sur la broche/vitesse à essayer
 
   demarrerWifi();
 
@@ -933,6 +1043,7 @@ void setup() {
   server.on("/cmd", handleCmd);
   server.on("/telemetrie", handleTelemetrie);
   server.on("/gps", handleGps);
+  server.on("/gps-detecter", handleGpsDetecter);
   server.on("/wifiup", HTTP_GET, handleWifiUpForm);
   server.on("/wifiup-login", HTTP_POST, handleWifiUpLogin);
   server.onNotFound(handleNotFound);
@@ -957,6 +1068,7 @@ void loop() {
   ws.loop();
   lireUdpManette();
   lireGPS();
+  gererDetectionGps();
   mettreAJourLed();
 #if JOYSTICK_LOCAL
   lireJoystickLocal();

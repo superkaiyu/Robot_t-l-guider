@@ -325,6 +325,7 @@
                 </div>
                 <div class="gps-details">
                     <div>Module : <b id="val-gps-module">—</b></div>
+                    <div>Branché sur : <b id="val-gps-broche">—</b></div>
                     <div title="Plus la valeur est basse, plus la position est précise (&lt; 2 = bon)">Précision (HDOP) : <b id="val-gps-hdop">—</b></div>
                     <div>Cap : <b id="val-gps-cap">—</b></div>
                     <div>Heure UTC : <b id="val-gps-heure">—</b></div>
@@ -334,6 +335,7 @@
                 <div class="note-box" id="note-gps">Connectez-vous au robot pour recevoir la position GPS.</div>
 
                 <div class="gps-actions">
+                    <button class="btn" id="btn-gps-detecter" title="Le robot réessaie toutes les broches libres et toutes les vitesses">Relancer la détection du GPS</button>
                     <a class="btn" id="lien-osm" href="#" target="_blank" rel="noopener">Ouvrir dans OpenStreetMap</a>
                     <a class="btn" id="lien-gmaps" href="#" target="_blank" rel="noopener">Ouvrir dans Google Maps</a>
                     <label><input type="checkbox" id="chk-carte"> Afficher la carte (nécessite Internet sur ce PC)</label>
@@ -620,6 +622,8 @@
 
         // ==================== GPS ====================
         const ETATS_GPS = {
+            'detection':  { badge: 'Détection du module...', couleur: 'rgba(96,165,250,0.25)', texte: '#93c5fd', dot: 'warn',
+                            note: 'Le robot cherche sur quelle broche (D7, D6, D2, D10) et à quelle vitesse (9600, 115200... bauds) le GPS envoie ses données. Quelques secondes suffisent.' },
             'fix':        { badge: 'Position acquise', couleur: 'rgba(52,211,153,0.25)', texte: '#6ee7b7', dot: 'ok',
                             note: 'Position reçue du module GPS, transmise par le WiFi du robot.' },
             'simulation': { badge: 'Simulation', couleur: 'rgba(192,132,252,0.25)', texte: '#d8b4fe', dot: 'ok',
@@ -627,7 +631,7 @@
             'recherche':  { badge: 'Recherche satellites', couleur: 'rgba(251,191,36,0.25)', texte: '#fcd34d', dot: 'warn',
                             note: 'Le module GPS est bien câblé et communique avec l’ESP32 (données reçues). Il lui faut maintenant une vue dégagée sur le ciel pour calculer sa position : dehors ou contre une fenêtre, compter 1 à 5 minutes au premier démarrage.' },
             'absent':     { badge: 'Module non détecté', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
-                            note: 'Le robot ne reçoit AUCUNE donnée du GPS. Vérifier le câblage : TX du GPS → D7 (GPIO44) de l’ESP32 robot, VCC → 3V3, GND → GND.' },
+                            note: 'Le robot a essayé toutes ses broches libres et toutes les vitesses courantes sans recevoir de données GPS (nouvel essai automatique toutes les 10 s). Vérifier le câblage sur l\u2019ESP32 robot (celui SANS joystick) : fil TX du GPS → D7 (ou D6, D2, D10), VCC → 3V3 (ou 5V selon le module), GND → GND. La LED du module GPS doit être allumée.' },
             'illisible':  { badge: 'Données illisibles', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
                             note: 'Le robot reçoit des données du GPS mais ne peut pas les décoder : vérifier la vitesse série (9600 bauds par défaut pour l’Air530) et le fil de masse commun.' },
         };
@@ -652,6 +656,7 @@
 
             let badge = infos.badge;
             if (etat === 'recherche' && satsVisibles) badge = `Recherche · ${satsVisibles} satellites entendus`;
+            if (etat === 'detection' && data.gpsEssai) badge = `Détection · essai ${data.gpsEssai.replace(/ \(GPIO\d+\)/, '')}`;
             document.querySelectorAll('[data-gps=badge]').forEach(el => { el.textContent = badge; el.style.background = infos.couleur; el.style.color = infos.texte; });
             document.querySelectorAll('[data-gps=lat]').forEach(el => { el.textContent = connue ? lat.toFixed(6) : '--'; el.classList.toggle('perime', !fix); });
             document.querySelectorAll('[data-gps=lon]').forEach(el => { el.textContent = connue ? lon.toFixed(6) : '--'; el.classList.toggle('perime', !fix); });
@@ -660,10 +665,12 @@
             setDot('dot-gps', infos.dot);
             $('label-gps-liaison').textContent = fix ? `${lat.toFixed(5)}, ${lon.toFixed(5)}` : badge;
 
-            const cleEtat = `${etat}|${connue && !fix}`;
+            const cleEtat = `${etat}|${connue && !fix}|${data.gpsBroche || ''}`;
             if (cleEtat !== gpsDernierEtatAffiche) { // évite de réécrire le texte 20 fois par seconde
                 gpsDernierEtatAffiche = cleEtat;
-                $('note-gps').textContent = infos.note + (!fix && connue ? ' Dernière position connue affichée en gris.' : '');
+                let note = infos.note;
+                if ((etat === 'recherche' || etat === 'fix') && data.gpsBroche) note = `Module GPS détecté sur ${data.gpsBroche} à ${data.gpsBauds} bauds. ` + note;
+                $('note-gps').textContent = note + (!fix && connue ? ' Dernière position connue affichée en gris.' : '');
                 $('val-gps-module').textContent = infos.badge;
             }
             $('val-gps-vitesse').textContent = fix && data.gpsVitesseKmh !== undefined ? Number(data.gpsVitesseKmh).toFixed(1) : '--';
@@ -671,6 +678,10 @@
             $('val-gps-hdop').textContent = fix && data.gpsHdop !== undefined ? `${Number(data.gpsHdop).toFixed(2)}` : '—';
             $('val-gps-cap').textContent = fix && data.gpsCap !== undefined ? `${Number(data.gpsCap).toFixed(0)}°` : '—';
             $('val-gps-heure').textContent = data.gpsHeureUTC || '—';
+            if (data.gpsBroche !== undefined) {
+                $('val-gps-broche').textContent = data.gpsBroche ? `${data.gpsBroche} · ${data.gpsBauds} bauds (détecté automatiquement)`
+                    : etat === 'detection' ? `recherche en cours (${data.gpsEssai || '...'})` : `rien trouvé sur ${data.gpsBrochesTestees || 'D7'}`;
+            }
             $('val-gps-caracteres').textContent = data.gpsCaracteres ?? '—';
             $('val-gps-trames').textContent = data.gpsTramesOk !== undefined ? `${data.gpsTramesOk} / ${data.gpsTramesKo}` : '—';
 
@@ -1002,6 +1013,11 @@
         }
 
         $('cmd-stop-global').addEventListener('click', envoyerArretUrgence);
+        $('btn-gps-detecter').addEventListener('click', () => {
+            if (!esp32Url) { alert('Connecte-toi d\u2019abord au robot.'); return; }
+            if (transport === 'ws' && wsSocket?.readyState === WebSocket.OPEN) wsSocket.send('gpsdetect');
+            else fetchAvecTimeout(`${esp32Url}/gps-detecter`).catch(() => {});
+        });
 
         // ==================== MANETTE USB (PC) ====================
         window.addEventListener('gamepadconnected', e => { gamepadIndex=e.gamepad.index; setDot('dot-gamepad', 'ok'); $('label-gamepad-status').textContent = e.gamepad.id; $('stick-dot-roues').style.opacity = '1'; });
