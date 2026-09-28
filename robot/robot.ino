@@ -18,9 +18,21 @@
 
   ARCHITECTURE (tout passe par le WiFi du robot) :
 
-      [GPS Air530] --UART--> [ESP32 ROBOT] <--WiFi "ROBOT_ESP32"--> [ESP32 MANETTE + joystick]
+      [GPS Air530] --UART--> [ESP32 ROBOT] <--UDP 4210, 25x/s--> [ESP32 MANETTE + joystick]
                                   ^
-                                  +--------WiFi "ROBOT_ESP32"--> [PC/téléphone : IHM http://192.168.4.1]
+                                  +--WebSocket port 81, 20x/s--> [PC/téléphone : IHM http://192.168.4.1]
+
+  RÉACTIVITÉ : les deux liaisons restent ouvertes en permanence (pas de nouvelle
+  connexion HTTP à chaque échange) :
+    - Manette -> Robot : datagrammes UDP (le plus rapide ; un paquet perdu est
+      remplacé 40 ms plus tard par le suivant).
+    - Robot <-> IHM : WebSocket (le robot pousse la télémétrie, l'IHM envoie ses
+      commandes dès qu'elles changent). Voir ws_serveur.h.
+    Les anciennes routes HTTP (/cmd, /telemetrie) restent disponibles en secours.
+
+  IDENTIFICATION USB : taper "?" dans le Moniteur Série -> répond "ID=ROBOT".
+  Utilisé par tools/televerser.py pour trouver le bon port COM quand les deux
+  ESP32 sont branchés en même temps.
 
   ⚠️ À PROPOS DU GPS : un module GPS calcule sa position en ÉCOUTANT les signaux des
   satellites (il n'émet rien vers eux). Cette partie-là est inévitable : sans ciel
@@ -39,14 +51,19 @@
     Sans commande fraîche depuis 500 ms -> moteurs coupés.
 
   Bibliothèque requise : "TinyGPSPlus" par Mikal Hart (Gestionnaire de bibliothèques).
-  Carte : "XIAO_ESP32S3" (paquet esp32 d'Espressif).
+  Carte : "XIAO_ESP32S3" (paquet esp32 d'Espressif), "USB CDC On Boot : Enabled".
+  Téléversement des deux cartes branchées en même temps : voir README (televerser_*.bat).
 */
 
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <WebServer.h>
 #include <HTTPClient.h>
 #include <TinyGPSPlus.h>
-#include "ihm_html.h" // page de l'IHM (générée depuis ihm/ihm.html, voir README)
+#include "ihm_html.h"    // page de l'IHM compressée (générée depuis ihm/ihm.html, voir README)
+#include "ws_serveur.h"  // mini serveur WebSocket (aucune bibliothèque à installer)
+
+const char* IDENTITE = "ROBOT"; // renvoyé sur le port série quand on tape "?"
 
 // =========================================================
 // OPTIONS
@@ -89,6 +106,11 @@ const int NB_RESEAUX = sizeof(reseaux) / sizeof(reseaux[0]);
 const unsigned long TIMEOUT_CONNEXION_STA_MS = 15000;
 
 WebServer server(80);
+ServeurWebSocket ws(81);          // IHM : télémétrie poussée + commandes instantanées
+WiFiUDP udp;                      // Manette : commandes à 25 Hz
+const uint16_t PORT_UDP_ROBOT = 4210;
+const unsigned long INTERVALLE_TELEMETRIE_WS_MS = 50; // 20 fois par seconde
+unsigned long derniereTelemetrieWsMs = 0;
 
 // =========================================================
 // CONFIGURATION MATÉRIELLE (BROCHAGE — XIAO ESP32S3)
@@ -513,29 +535,20 @@ void ajouterChampsGPS(String& t) {
   jsonChampInt(t, "gpsTramesKo", (long)gps.failedChecksum());
 }
 
-// /cmd?src=manette|ihm&rg=-100..100&rd=-100..100[&stop=1][&jx=..&jy=..&jb=0|1&rssi=..]
-// Réponse (lue par la Manette) : OK;pilote=...;gps=...;fix=0|1;lat=...;lon=...;sat=...
-void handleCmd() {
-  String src = server.arg("src");
-  int rg = server.arg("rg").toInt();
-  int rd = server.arg("rd").toInt();
-
-  if (src == "manette") {
-    noterRequeteManette();
-    enregistrerCommande(cmdManette, rg, rd);
-    if (server.hasArg("jx")) mesJoystickAxeX = constrain(server.arg("jx").toFloat(), -1.0f, 1.0f);
-    if (server.hasArg("jy")) mesJoystickAxeY = constrain(server.arg("jy").toFloat(), -1.0f, 1.0f);
-    mesJoystickBouton = (server.arg("jb") == "1");
-    if (server.hasArg("rssi")) manetteRssi = server.arg("rssi").toInt();
-    if (mesJoystickBouton) declencherArretUrgence(DUREE_ARRET_BOUTON_MS);
-  } else {
-    // Sans "src" : compatibilité avec les anciennes versions de l'IHM
-    noterRequeteIhm();
-    enregistrerCommande(cmdIhm, rg, rd);
-  }
-  if (server.arg("stop") == "1") declencherArretUrgence(DUREE_ARRET_IHM_MS);
+// Commande reçue de l'ESP32 Manette (par UDP, ou par HTTP pour les anciennes versions)
+void traiterCommandeManette(int rg, int rd, float jx, float jy, bool bouton, int rssi) {
+  noterRequeteManette();
+  enregistrerCommande(cmdManette, rg, rd);
+  mesJoystickAxeX = constrain(jx, -1.0f, 1.0f);
+  mesJoystickAxeY = constrain(jy, -1.0f, 1.0f);
+  mesJoystickBouton = bouton;
+  if (rssi != 0) manetteRssi = rssi;
+  if (bouton) declencherArretUrgence(DUREE_ARRET_BOUTON_MS);
   mettreAJourPilotage();
+}
 
+// Réponse renvoyée à la Manette : OK;pilote=...;gps=...;fix=0|1;lat=...;lon=...;sat=...
+String construireReponseManette() {
   String r = "OK;pilote=";
   r += NOMS_PILOTES[piloteActuel];
   r += ";gps="; r += gpsEtat;
@@ -543,13 +556,11 @@ void handleCmd() {
   r += ";lat="; r += String(mesLatitude, 6);
   r += ";lon="; r += String(mesLongitude, 6);
   r += ";sat="; r += String(gpsSatellites);
-  ajouterEnTetesCORS();
-  server.send(200, "text/plain", r);
+  return r;
 }
 
-void handleTelemetrie() {
-  noterRequeteIhm();
-  String t = "{";
+void construireTelemetrie(String& t) {
+  t = "{";
   t.reserve(1200);
   jsonChamp(t, "vitesseRoueG", mesVitesseRoueG);
   jsonChamp(t, "vitesseRoueD", mesVitesseRoueD);
@@ -569,14 +580,125 @@ void handleTelemetrie() {
   jsonChampInt(t, "manetteRssi", manetteRssi);
   ajouterChampsGPS(t);
   jsonChampInt(t, "apClients", WiFi.softAPgetStationNum());
+  jsonChampInt(t, "ihmClients", ws.nbClients());
   jsonChampBool(t, "staConnecte", etatSta == STA_CONNECTE);
   jsonChampTexte(t, "staSsid", etatSta == STA_CONNECTE ? WiFi.SSID() : String(""));
   jsonChampTexte(t, "staIp", etatSta == STA_CONNECTE ? WiFi.localIP().toString() : String(""));
   jsonChampInt(t, "uptime", (long)(millis() / 1000));
   t.remove(t.length() - 1);
   t += "}";
+}
+
+// /cmd?src=manette|ihm&rg=-100..100&rd=-100..100[&stop=1][&jx=..&jy=..&jb=0|1&rssi=..]
+// Route de secours : l'IHM passe normalement par le WebSocket et la Manette par UDP.
+void handleCmd() {
+  String src = server.arg("src");
+  int rg = server.arg("rg").toInt();
+  int rd = server.arg("rd").toInt();
+
+  if (src == "manette") {
+    traiterCommandeManette(rg, rd, server.arg("jx").toFloat(), server.arg("jy").toFloat(),
+                           server.arg("jb") == "1", server.arg("rssi").toInt());
+  } else {
+    // Sans "src" : compatibilité avec les anciennes versions de l'IHM
+    noterRequeteIhm();
+    enregistrerCommande(cmdIhm, rg, rd);
+  }
+  if (server.arg("stop") == "1") declencherArretUrgence(DUREE_ARRET_IHM_MS);
+  mettreAJourPilotage();
+
+  ajouterEnTetesCORS();
+  server.send(200, "text/plain", construireReponseManette());
+}
+
+void handleTelemetrie() {
+  noterRequeteIhm();
+  String t;
+  construireTelemetrie(t);
   ajouterEnTetesCORS();
   server.send(200, "application/json", t);
+}
+
+// =========================================================
+// UDP : LIAISON RAPIDE AVEC L'ESP32 MANETTE
+// =========================================================
+// Paquet reçu : "M,<rg>,<rd>,<jx>,<jy>,<bouton 0|1>,<rssi>"  -> réponse : construireReponseManette()
+void lireUdpManette() {
+  for (int paquets = 0; paquets < 4; paquets++) { // vide la file sans monopoliser la boucle
+    int taille = udp.parsePacket();
+    if (taille <= 0) return;
+    char tampon[96];
+    int lu = udp.read((uint8_t*)tampon, sizeof(tampon) - 1);
+    if (lu <= 0) continue;
+    tampon[lu] = 0;
+    if (tampon[0] != 'M' || tampon[1] != ',') continue;
+
+    float champs[6] = { 0, 0, 0, 0, 0, 0 };
+    int n = 0;
+    char* suite = nullptr;
+    for (char* morceau = strtok_r(tampon + 2, ",", &suite); morceau && n < 6; morceau = strtok_r(nullptr, ",", &suite)) {
+      champs[n++] = atof(morceau);
+    }
+    if (n < 5) continue;
+    traiterCommandeManette((int)champs[0], (int)champs[1], champs[2], champs[3], champs[4] != 0, (int)champs[5]);
+
+    String r = construireReponseManette();
+    udp.beginPacket(udp.remoteIP(), udp.remotePort());
+    udp.write((const uint8_t*)r.c_str(), r.length());
+    udp.endPacket();
+  }
+}
+
+// =========================================================
+// WEBSOCKET : LIAISON TEMPS RÉEL AVEC L'IHM
+// =========================================================
+// Messages de l'IHM : "c,<rg>,<rd>" (commande), "stop" (arrêt d'urgence), "p,<n>" (mesure de latence)
+void surMessageWs(uint8_t client, char* message, size_t longueur) {
+  noterRequeteIhm();
+  if (message[0] == 'c' && message[1] == ',') {
+    char* suite = nullptr;
+    int rg = atoi(message + 2);
+    strtok_r(message + 2, ",", &suite);
+    int rd = suite ? atoi(suite) : 0;
+    enregistrerCommande(cmdIhm, rg, rd);
+    mettreAJourPilotage();
+  } else if (strcmp(message, "stop") == 0) {
+    enregistrerCommande(cmdIhm, 0, 0);
+    declencherArretUrgence(DUREE_ARRET_IHM_MS);
+    mettreAJourPilotage();
+  } else if (message[0] == 'p' && message[1] == ',') {
+    message[0] = 'P'; // renvoyé tel quel : l'IHM mesure l'aller-retour
+    ws.envoyer(client, message, longueur);
+  }
+}
+
+void surConnexionWs(uint8_t client, bool connecte) {
+  Serial.printf("[WebSocket] IHM n°%d %s (%d connectée(s))\n", client, connecte ? "connectée" : "déconnectée", ws.nbClients());
+  if (connecte) {
+    noterRequeteIhm();
+    derniereTelemetrieWsMs = 0; // envoie tout de suite un premier état complet
+  }
+}
+
+void diffuserTelemetrieWs() {
+  if (ws.nbClients() == 0 || millis() - derniereTelemetrieWsMs < INTERVALLE_TELEMETRIE_WS_MS) return;
+  derniereTelemetrieWsMs = millis();
+  String t;
+  construireTelemetrie(t);
+  ws.diffuser(t.c_str(), t.length());
+}
+
+// =========================================================
+// IDENTIFICATION SUR LE PORT USB
+// =========================================================
+void repondreIdentification() {
+  while (Serial.available() > 0) {
+    int c = Serial.read();
+    if (c == '?') {
+      Serial.print("ID=");
+      Serial.println(IDENTITE);
+    }
+  }
 }
 
 // Position GPS seule (pratique pour un téléphone ou un autre appareil)
@@ -677,15 +799,18 @@ void handleWifiUpLogin() {
 }
 
 // L'IHM complète est servie par le robot lui-même : http://192.168.4.1
+// (compressée en gzip : ~4 fois moins de données -> page chargée plus vite)
 void handleRacine() {
   server.sendHeader("Cache-Control", "no-store");
-  server.send_P(200, "text/html; charset=utf-8", IHM_HTML);
+  server.sendHeader("Content-Encoding", "gzip");
+  server.send_P(200, "text/html; charset=utf-8", (const char*)IHM_HTML_GZ, IHM_HTML_GZ_TAILLE);
 }
 
 void handleAide() {
   ajouterEnTetesCORS();
   server.send(200, "text/plain; charset=utf-8",
-              "Robot ESP32 OK. Routes : /  (IHM)   /cmd?src=ihm&rg=0&rd=0   /telemetrie   /gps   /wifiup (portail WIFI-UP)");
+              "Robot ESP32 OK. Routes : /  (IHM)   /cmd?src=ihm&rg=0&rd=0   /telemetrie   /gps   /wifiup (portail WIFI-UP)\n"
+              "Temps réel : WebSocket ws://<ip>:81/  et  UDP port 4210 (Manette)");
 }
 
 void handleNotFound() {
@@ -784,6 +909,9 @@ void gererWifiExterne() {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  Serial.println();
+  Serial.print("ID=");
+  Serial.println(IDENTITE);
 
   pinMode(PIN_ROUE_G_PWM_AV, OUTPUT);
   pinMode(PIN_ROUE_G_PWM_AR, OUTPUT);
@@ -809,7 +937,11 @@ void setup() {
   server.on("/wifiup-login", HTTP_POST, handleWifiUpLogin);
   server.onNotFound(handleNotFound);
   server.begin();
-  Serial.println("Serveur HTTP démarré sur le port 80. Robot prêt !");
+  ws.surMessage(surMessageWs);
+  ws.surConnexion(surConnexionWs);
+  ws.begin();
+  udp.begin(PORT_UDP_ROBOT);
+  Serial.println("Serveurs démarrés : HTTP 80 (IHM), WebSocket 81 (temps réel), UDP 4210 (Manette). Robot prêt !");
 #if GPS_SIMULATION
   Serial.println("[GPS] ⚠️ MODE SIMULATION ACTIF (GPS_SIMULATION = 1)");
 #endif
@@ -822,6 +954,8 @@ void setup() {
 // =========================================================
 void loop() {
   server.handleClient();
+  ws.loop();
+  lireUdpManette();
   lireGPS();
   mettreAJourLed();
 #if JOYSTICK_LOCAL
@@ -831,6 +965,8 @@ void loop() {
   surveillerClients();
   gererWifiExterne();
   afficherEtatGpsSerie();
+  diffuserTelemetrieWs();
+  repondreIdentification();
 
   if (millis() - dernierCalculMs > intervalleMesureMs) {
     float deltaTSec = (millis() - dernierCalculMs) / 1000.0;

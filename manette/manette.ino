@@ -11,16 +11,17 @@
       position GPS dans CHAQUE réponse -> la Manette l'affiche dans son Moniteur Série.
     - Le robot relaie aussi la position du stick à l'IHM (http://192.168.4.1).
 
-  Échange à chaque cycle (10 fois par seconde) :
-    Manette -> Robot : GET /cmd?src=manette&rg=..&rd=..&jx=..&jy=..&jb=0|1&rssi=..
-    Robot -> Manette : OK;pilote=manette;gps=fix;fix=1;lat=48.858370;lon=2.294481;sat=8
+  Échange 25 fois par seconde, en UDP (le plus réactif : pas de connexion à
+  ouvrir, un paquet perdu est remplacé 40 ms plus tard par le suivant) :
+    Manette -> Robot (port 4210) : M,<rg>,<rd>,<jx>,<jy>,<bouton 0|1>,<rssi>
+    Robot -> Manette             : OK;pilote=manette;gps=fix;fix=1;lat=48.858370;lon=2.294481;sat=8
 
   Réseau à rejoindre (créé par le robot) :
     SSID : ROBOT_ESP32
     Mot de passe : motdepasse123
     IP du robot (fixe) : 192.168.4.1
 
-  Bibliothèques requises : AUCUNE (WiFi.h et HTTPClient.h sont dans le core ESP32).
+  Bibliothèques requises : AUCUNE (WiFi.h et WiFiUdp.h sont dans le core ESP32).
 
   BROCHAGE (XIAO ESP32S3) :
     Joystick VCC -> 3V3
@@ -35,19 +36,28 @@
     clignote lent    = WiFi OK mais le robot ne répond pas
     clignote rapide  = recherche du WiFi ROBOT_ESP32
 
+  IDENTIFICATION USB : taper "?" dans le Moniteur Série -> répond "ID=MANETTE".
+  Utilisé par tools/televerser.py pour trouver le bon port COM quand les deux
+  ESP32 sont branchés en même temps.
+
   ⚠️ Ne pas toucher le joystick pendant la première seconde après le démarrage :
   sa position de repos est mesurée à ce moment-là (calibration automatique).
 */
 
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <WiFiUdp.h>
+
+const char* IDENTITE = "MANETTE"; // renvoyé sur le port série quand on tape "?"
 
 // =========================================================
 // RÉSEAU DU ROBOT À REJOINDRE
 // =========================================================
 const char* ssidRobot = "ROBOT_ESP32";
 const char* passwordRobot = "motdepasse123";
-const char* ipRobot = "192.168.4.1"; // IP fixe du robot en mode point d'accès
+const IPAddress ipRobot(192, 168, 4, 1); // IP fixe du robot en mode point d'accès
+const uint16_t PORT_UDP_ROBOT = 4210;
+const uint16_t PORT_UDP_MANETTE = 4211;
+WiFiUDP udp;
 
 // =========================================================
 // BROCHAGE
@@ -64,8 +74,7 @@ int centreX = 2048, centreY = 2048;  // recalculés au démarrage (calibration)
 // =========================================================
 // ÉTAT DE LA LIAISON ET INFOS REÇUES DU ROBOT
 // =========================================================
-const unsigned long INTERVALLE_ENVOI_MS = 100;
-const unsigned long HTTP_TIMEOUT_MS = 300;
+const unsigned long INTERVALLE_ENVOI_MS = 40; // 25 fois par seconde
 const unsigned long LIAISON_PERDUE_MS = 1000;
 unsigned long derniereEnvoiMs = 0;
 unsigned long derniereReponseOkMs = 0;
@@ -117,7 +126,7 @@ float normaliserAxe(int brut, int centre) {
 }
 
 // =========================================================
-// ÉCHANGE AVEC LE ROBOT
+// ÉCHANGE AVEC LE ROBOT (UDP, non bloquant)
 // =========================================================
 String valeurChamp(const String& reponse, const char* cle) {
   String motif = String(";") + cle + "=";
@@ -128,30 +137,44 @@ String valeurChamp(const String& reponse, const char* cle) {
   return fin < 0 ? reponse.substring(debut) : reponse.substring(debut, fin);
 }
 
-void analyserReponse(const String& r) {
-  if (!r.startsWith("OK")) return;
+bool analyserReponse(const String& r) {
+  if (!r.startsWith("OK")) return false;
   infosRobot.pilote = valeurChamp(r, "pilote");
   infosRobot.gpsEtat = valeurChamp(r, "gps");
   infosRobot.gpsFix = valeurChamp(r, "fix") == "1";
   infosRobot.latitude = valeurChamp(r, "lat").toDouble();
   infosRobot.longitude = valeurChamp(r, "lon").toDouble();
   infosRobot.satellites = valeurChamp(r, "sat").toInt();
+  return true;
 }
 
-bool envoyerCommande(int pwrRoueG, int pwrRoueD, float jx, float jy, bool bouton) {
-  char url[192];
-  snprintf(url, sizeof(url), "http://%s/cmd?src=manette&rg=%d&rd=%d&jx=%.2f&jy=%.2f&jb=%d&rssi=%d",
-           ipRobot, pwrRoueG, pwrRoueD, jx, jy, bouton ? 1 : 0, (int)WiFi.RSSI());
+void envoyerCommande(int pwrRoueG, int pwrRoueD, float jx, float jy, bool bouton) {
+  char paquet[64];
+  int n = snprintf(paquet, sizeof(paquet), "M,%d,%d,%.2f,%.2f,%d,%d",
+                   pwrRoueG, pwrRoueD, jx, jy, bouton ? 1 : 0, (int)WiFi.RSSI());
+  udp.beginPacket(ipRobot, PORT_UDP_ROBOT);
+  udp.write((const uint8_t*)paquet, n);
+  udp.endPacket();
+}
 
-  HTTPClient http;
-  http.setConnectTimeout(HTTP_TIMEOUT_MS); // n'attend pas indéfiniment si le robot ne répond pas
-  http.setTimeout(HTTP_TIMEOUT_MS);
-  if (!http.begin(url)) return false;
-  int code = http.GET();
-  bool ok = (code == 200);
-  if (ok) analyserReponse(http.getString());
-  http.end();
-  return ok;
+// Lit les réponses du robot déjà arrivées (sans attendre)
+void lireReponsesRobot() {
+  int taille;
+  while ((taille = udp.parsePacket()) > 0) {
+    char tampon[160];
+    int lu = udp.read((uint8_t*)tampon, sizeof(tampon) - 1);
+    if (lu <= 0) continue;
+    tampon[lu] = 0;
+    if (analyserReponse(String(tampon))) {
+      derniereReponseOkMs = millis();
+      if (!robotRepond) Serial.println("[Robot] Liaison établie : commandes et GPS échangés.");
+      robotRepond = true;
+    }
+  }
+  if (robotRepond && millis() - derniereReponseOkMs > LIAISON_PERDUE_MS) {
+    robotRepond = false;
+    Serial.println("[Robot] Ne répond plus.");
+  }
 }
 
 // =========================================================
@@ -168,6 +191,7 @@ void gererConnexionWifi() {
     if (connecte) {
       Serial.print("[WiFi] Connectée au robot ! IP de la Manette : ");
       Serial.println(WiFi.localIP());
+      udp.begin(PORT_UDP_MANETTE);
     } else {
       Serial.println("[WiFi] Connexion au robot perdue...");
       robotRepond = false;
@@ -179,6 +203,19 @@ void gererConnexionWifi() {
     Serial.println("[WiFi] Nouvelle tentative de connexion à ROBOT_ESP32 (le robot est-il allumé ?)");
     WiFi.disconnect();
     WiFi.begin(ssidRobot, passwordRobot);
+  }
+}
+
+// =========================================================
+// IDENTIFICATION SUR LE PORT USB
+// =========================================================
+void repondreIdentification() {
+  while (Serial.available() > 0) {
+    int c = Serial.read();
+    if (c == '?') {
+      Serial.print("ID=");
+      Serial.println(IDENTITE);
+    }
   }
 }
 
@@ -216,6 +253,9 @@ void afficherEtat(int x, int y, bool bouton, int pwrG, int pwrD) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  Serial.println();
+  Serial.print("ID=");
+  Serial.println(IDENTITE);
 
   pinMode(PIN_JOYSTICK_SW, INPUT_PULLUP);
   pinMode(PIN_LED_STATUT, OUTPUT);
@@ -235,6 +275,7 @@ void setup() {
     delay(300);
     Serial.print(".");
     mettreAJourLed();
+    repondreIdentification();
   }
   Serial.println();
   if (WiFi.status() != WL_CONNECTED) {
@@ -248,6 +289,8 @@ void setup() {
 void loop() {
   gererConnexionWifi();
   mettreAJourLed();
+  repondreIdentification();
+  if (WiFi.status() == WL_CONNECTED) lireReponsesRobot();
 
   if (millis() - derniereEnvoiMs < INTERVALLE_ENVOI_MS) return;
   derniereEnvoiMs = millis();
@@ -266,19 +309,10 @@ void loop() {
     pwrRoueG = constrain((int)((avance + tourne) * PUISSANCE_MAX), -100, 100);
     pwrRoueD = constrain((int)((avance - tourne) * PUISSANCE_MAX), -100, 100);
   }
-  // bouton appuyé : on envoie 0/0 ET jb=1 -> le robot déclenche l'arrêt d'urgence
+  // bouton appuyé : on envoie 0/0 ET bouton=1 -> le robot déclenche l'arrêt d'urgence
   // pour TOUTES les sources (IHM comprise).
 
-  if (WiFi.status() == WL_CONNECTED) {
-    if (envoyerCommande(pwrRoueG, pwrRoueD, jx, jy, boutonAppuye)) {
-      derniereReponseOkMs = millis();
-      if (!robotRepond) Serial.println("[Robot] Liaison établie : commandes et GPS échangés.");
-      robotRepond = true;
-    } else if (robotRepond && millis() - derniereReponseOkMs > LIAISON_PERDUE_MS) {
-      robotRepond = false;
-      Serial.println("[Robot] Ne répond plus.");
-    }
-  }
+  if (WiFi.status() == WL_CONNECTED) envoyerCommande(pwrRoueG, pwrRoueD, jx, jy, boutonAppuye);
 
   afficherEtat(x, y, boutonAppuye, pwrRoueG, pwrRoueD);
 }

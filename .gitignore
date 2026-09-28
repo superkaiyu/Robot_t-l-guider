@@ -1,3 +1,6 @@
 # Mots de passe WiFi personnels (voir robot/secrets_exemple.h)
 robot/secrets.h
 build/
+# Associations carte <-> rôle propres à chaque PC (tools/televerser.py)
+tools/cartes_esp32.json
+__pycache__/
