@@ -3,57 +3,67 @@
   FIRMWARE ESP32 #2 — "ROBOT" — Roues + GPS + WiFi AP(+STA) + IHM intégrée
   =================================================================================
 
-  Ce programme transforme la carte Seeed XIAO ESP32S3 en cerveau de robot :
+  Carte : ESP32-S3 N16R8 (DevKitC-1, 16 Mo de flash, 8 Mo de PSRAM).
+  (L'ancienne carte Seeed XIAO ESP32S3 reste prise en charge : le brochage est choisi
+  automatiquement selon la carte sélectionnée dans l'Arduino IDE, voir BROCHAGE.)
+
+  Ce programme transforme la carte en cerveau de robot :
   1. Crée TOUJOURS son propre point d'accès WiFi "ROBOT_ESP32" (192.168.4.1).
      C'est le réseau commun sur lequel tout le monde communique :
-        - l'ESP32 "Manette" (joystick sur breadboard) s'y connecte,
+        - l'ESP32 "Manette" (XIAO + joystick sur breadboard) s'y connecte,
         - le PC / téléphone (IHM) s'y connecte aussi.
      En option, il rejoint EN PLUS un réseau existant (voir secrets.h).
-  2. DÉTECTE puis lit le module GPS Air530 branché en UART (fil TX du GPS -> D7
-     conseillé ; D6, D2, D10 et les vitesses courantes sont trouvés automatiquement)
-     et diffuse la position en WiFi à l'IHM et à la Manette.
-  3. Reçoit les commandes de déplacement (Manette et/ou IHM) et pilote 2 moteurs DC.
+  2. DÉTECTE puis lit le module GPS branché en UART (fil TX du GPS -> GPIO14 ;
+     d'autres broches libres et les vitesses courantes sont trouvées automatiquement),
+     FILTRE la position (elle ne "bouge" plus quand le robot est à l'arrêt) et la
+     diffuse en WiFi à l'IHM et à la Manette.
+  3. Reçoit les commandes de déplacement (Manette et/ou IHM) et pilote 2 moteurs DC
+     via un driver (TB6612FNG ou DRV8833 : 2 signaux PWM par moteur).
   4. Sert l'IHM directement : ouvrir http://192.168.4.1 dans un navigateur suffit
      (aucun fichier à ouvrir sur le PC, aucune connexion Internet nécessaire).
-  5. Lit batterie/courant pour la télémétrie.
+  5. Mesure la tension batterie (pont diviseur 30 kΩ / 10 kΩ) et le courant.
+
+  BROCHAGE ESP32-S3 N16R8 (voir aussi le README) :
+    Driver moteur : GPIO15 -> AIN1, GPIO16 -> AIN2 (roue gauche)
+                    GPIO17 -> BIN1, GPIO18 -> BIN2 (roue droite)
+                    TB6612 : VCC, STBY, PWMA, PWMB au 3V3 ; DRV8833 : nSLEEP au 3V3
+                    GND du driver relié au GND de l'ESP32 (masse commune obligatoire)
+    LED statut    : GPIO21 -> résistance 220-330 Ω -> LED -> GND
+    Batterie      : GPIO1 = milieu du pont diviseur (30 kΩ vers le + batterie, 10 kΩ vers GND)
+    Courant       : GPIO2 (relié au GND s'il n'y a pas de capteur)
+    GPS           : TX du module -> GPIO14, VCC -> 3V3, GND -> GND (RX du module libre)
+    USB-C         : port marqué "UART" (Moniteur Série + téléversement)
 
   ARCHITECTURE (tout passe par le WiFi du robot) :
 
-      [GPS Air530] --UART--> [ESP32 ROBOT] <--UDP 4210, 25x/s--> [ESP32 MANETTE + joystick]
-                                  ^
-                                  +--WebSocket port 81, 20x/s--> [PC/téléphone : IHM http://192.168.4.1]
+      [GPS] --UART--> [ESP32 ROBOT] <--UDP 4210, 25x/s--> [ESP32 MANETTE + joystick]
+                            ^
+                            +--WebSocket port 81, 20x/s--> [PC/téléphone : IHM http://192.168.4.1]
 
-  RÉACTIVITÉ : les deux liaisons restent ouvertes en permanence (pas de nouvelle
-  connexion HTTP à chaque échange) :
-    - Manette -> Robot : datagrammes UDP (le plus rapide ; un paquet perdu est
-      remplacé 40 ms plus tard par le suivant).
+  RÉACTIVITÉ : les deux liaisons restent ouvertes en permanence :
+    - Manette -> Robot : datagrammes UDP (un paquet perdu est remplacé 40 ms plus tard).
     - Robot <-> IHM : WebSocket (le robot pousse la télémétrie, l'IHM envoie ses
       commandes dès qu'elles changent). Voir ws_serveur.h.
-    Les anciennes routes HTTP (/cmd, /telemetrie) restent disponibles en secours.
+    Les routes HTTP (/cmd, /telemetrie) restent disponibles en secours.
 
-  IDENTIFICATION USB : taper "?" dans le Moniteur Série -> répond "ID=ROBOT".
-  Utilisé par tools/televerser.py pour trouver le bon port COM quand les deux
-  ESP32 sont branchés en même temps.
+  MONITEUR SÉRIE (115200 bauds) : "?" -> "ID=ROBOT GPS=..." (utilisé par tools/televerser.py
+  pour trouver le bon port COM), "g" -> trames GPS brutes, "d" -> relancer la détection GPS.
 
-  ⚠️ À PROPOS DU GPS : un module GPS calcule sa position en ÉCOUTANT les signaux des
-  satellites (il n'émet rien vers eux). Cette partie-là est inévitable : sans ciel
-  dégagé, pas de position. En revanche, TOUT le transport des données (GPS -> ESP32
-  -> IHM / Manette) se fait uniquement par le fil série puis par le WiFi de l'ESP32.
-  L'IHM distingue clairement : "module non détecté" (problème de câblage),
-  "recherche satellites" (module OK mais pas encore de position) et "position acquise".
+  ⚠️ À PROPOS DU GPS : un module GPS calcule sa position en ÉCOUTANT les satellites.
+  Sans ciel dégagé, pas de position. Le transport des données (GPS -> ESP32 -> IHM /
+  Manette) passe uniquement par le fil série puis le WiFi de l'ESP32.
   Pour tester toute la chaîne en intérieur, passer GPS_SIMULATION à 1 ci-dessous.
 
   PRIORITÉ DES COMMANDES (plusieurs pilotes peuvent être connectés en même temps) :
     1. Arrêt d'urgence (bouton du joystick de la Manette, ou bouton de l'IHM)
-    2. Joystick local du robot (si JOYSTICK_LOCAL = 1)
-    3. ESP32 Manette (dès que son joystick est écarté du centre)
-    4. IHM (croix, manette USB du PC)
+    2. ESP32 Manette (dès que son joystick est écarté du centre)
+    3. IHM (joystick virtuel, clavier, manette USB du PC)
     Une source au repos (commande 0,0) ne bloque jamais les autres.
     Sans commande fraîche depuis 500 ms -> moteurs coupés.
 
   Bibliothèque requise : "TinyGPSPlus" par Mikal Hart (Gestionnaire de bibliothèques).
-  Carte : "XIAO_ESP32S3" (paquet esp32 d'Espressif), "USB CDC On Boot : Enabled".
-  Téléversement des deux cartes branchées en même temps : voir README (televerser_*.bat).
+  Arduino IDE, carte "ESP32S3 Dev Module" : USB CDC On Boot = Disabled (port UART),
+  Flash Size = 16MB, PSRAM = OPI PSRAM. Téléversement : voir README (televerser_*.bat).
 */
 
 #include <WiFi.h>
@@ -72,12 +82,6 @@ const char* IDENTITE = "ROBOT"; // renvoyé sur le port série quand on tape "?"
 // =========================================================
 // OPTIONS
 // =========================================================
-// 1 = un joystick est AUSSI câblé directement sur le robot (broches 3/9/43).
-// 0 = le joystick est uniquement sur l'ESP32 Manette (configuration actuelle).
-//     ⚠️ Laisser à 0 si rien n'est branché : des broches ADC "en l'air" donnent des
-//     valeurs aléatoires qui feraient bouger le robot tout seul.
-#define JOYSTICK_LOCAL 0
-
 // 1 = position GPS simulée (cercle de 10 m autour de SIM_LATITUDE/SIM_LONGITUDE),
 //     pour vérifier toute la chaîne ESP32 -> WiFi -> IHM/Manette en intérieur.
 // 0 = vraie lecture du module GPS Air530.
@@ -117,8 +121,13 @@ const unsigned long INTERVALLE_TELEMETRIE_WS_MS = 50; // 20 fois par seconde
 unsigned long derniereTelemetrieWsMs = 0;
 
 // =========================================================
-// CONFIGURATION MATÉRIELLE (BROCHAGE — XIAO ESP32S3)
+// BROCHAGE — choisi automatiquement selon la carte sélectionnée dans l'Arduino IDE
 // =========================================================
+typedef DetecteurGps<HardwareSerial>::Broche BrocheGps;
+
+#if defined(ARDUINO_XIAO_ESP32S3)
+// ---------- Ancienne carte : Seeed XIAO ESP32S3 (carte "XIAO_ESP32S3") ----------
+const char* NOM_CARTE = "XIAO ESP32S3";
 const int PIN_ROUE_G_PWM_AV = 1;  // D0
 const int PIN_ROUE_G_PWM_AR = 2;  // D1
 const int PIN_ROUE_D_PWM_AV = 4;  // D3
@@ -126,27 +135,52 @@ const int PIN_ROUE_D_PWM_AR = 5;  // D4
 const int PIN_LED_STATUT    = 6;  // D5
 const int PIN_BATTERIE_ADC  = 7;  // D8
 const int PIN_COURANT_ADC   = 8;  // D9
+// GPS : D7 conseillé ; D6, D2, D10 essayées ensuite
+const BrocheGps BROCHES_GPS[] = { { 44, "D7" }, { 43, "D6" }, { 3, "D2" }, { 9, "D10" } };
 
-// --- Joystick analogique local (optionnel, voir JOYSTICK_LOCAL) ---
-const int PIN_JOYSTICK_X  = 3;  // D2  VRx
-const int PIN_JOYSTICK_Y  = 9;  // D10 VRy
-const int PIN_JOYSTICK_SW = 43; // D6  bouton (appui = arrêt d'urgence local)
-const int JOYSTICK_CENTRE = 2048;    // valeur ADC au repos (12 bits, 0-4095), À CALIBRER si besoin
-const int JOYSTICK_ZONE_MORTE = 300; // en dessous, on considère le stick au repos
+#else
+// ---------- Carte du robot : ESP32-S3 N16R8 DevKitC-1 (carte "ESP32S3 Dev Module") ----------
+const char* NOM_CARTE = "ESP32-S3 N16R8";
+// Driver moteur (TB6612FNG ou DRV8833) : 2 signaux PWM par moteur
+const int PIN_ROUE_G_PWM_AV = 15; // -> AIN1 (roue gauche, marche avant)
+const int PIN_ROUE_G_PWM_AR = 16; // -> AIN2 (roue gauche, marche arrière)
+const int PIN_ROUE_D_PWM_AV = 17; // -> BIN1 (roue droite, marche avant)
+const int PIN_ROUE_D_PWM_AR = 18; // -> BIN2 (roue droite, marche arrière)
+const int PIN_LED_STATUT    = 21; // LED + résistance 220-330 Ω vers GND
+const int PIN_BATTERIE_ADC  = 1;  // milieu du pont diviseur 30 kΩ / 10 kΩ
+const int PIN_COURANT_ADC   = 2;  // capteur de courant (relié au GND s'il n'y en a pas)
+// GPS : TX du module -> GPIO14. Si rien n'arrive sur 14, le robot essaie aussi les broches
+// libres voisines (fil planté une rangée à côté sur la breadboard...). Jamais 43/44 :
+// ce sont les broches du port USB "UART" (Moniteur Série).
+const BrocheGps BROCHES_GPS[] = {
+  { 14, "GPIO14" }, { 13, "GPIO13" }, { 12, "GPIO12" }, { 11, "GPIO11" }, { 10, "GPIO10" },
+  { 4, "GPIO4" }, { 5, "GPIO5" }, { 6, "GPIO6" }, { 7, "GPIO7" }
+};
+#endif
 
-// --- GPS Air530 ---
-// Câblage conseillé : GPS TX -> D7 (GPIO44) ; GPS VCC -> 3V3 ; GPS GND -> GND.
-// On ne fait que LIRE la position : une seule broche de données suffit.
-// DÉTECTION AUTOMATIQUE (gps_detection.h) : si le fil TX du GPS est sur une autre broche
-// libre (D6, D2, D10) ou si le module parle à une autre vitesse (115200, 38400...),
-// le robot le trouve tout seul et s'en souvient pour le démarrage suivant.
+// --- Moteurs ---
+// Une roue tourne à l'envers ? Passer son INVERSER_ à true (au lieu d'intervertir les fils).
+const bool INVERSER_ROUE_G = false;
+const bool INVERSER_ROUE_D = false;
+// 20 kHz : au-delà de l'audible (plus de sifflement des moteurs). OK pour TB6612 et DRV8833.
+// Avec un vieux L298N, mettre 1000.
+const uint32_t FREQUENCE_PWM_MOTEURS = 20000;
+
+// --- Mesure batterie : pont diviseur 30 kΩ (côté + batterie) / 10 kΩ (côté GND) ---
+// Tension batterie = tension sur la broche x (30 + 10) / 10 = x 4. Pack 3S plein (12,6 V) -> 3,15 V.
+const float RAPPORT_DIVISEUR_BATTERIE = (30.0 + 10.0) / 10.0;
+const float TENSION_BATTERIE_ABSENTE = 2.0; // en dessous : pas de batterie branchée sur le pont
+// --- Mesure courant : capteur analogique. Sans capteur, la broche est reliée au GND -> 0 A.
+// Exemple ACS712-5A alimenté en 3V3 : offset ~1,65 V, ~0,185 V/A (à étalonner).
+const float COURANT_OFFSET_V = 0.0;
+const float COURANT_AMPERES_PAR_VOLT = 1.0;
+
+// --- GPS ---
+// On ne fait que LIRE la position : une seule broche de données suffit (TX du module).
+// DÉTECTION AUTOMATIQUE (gps_detection.h) : broche (liste BROCHES_GPS ci-dessus) et
+// vitesse (9600, 115200, 38400...) sont trouvées seules et mémorisées pour le démarrage suivant.
 HardwareSerial gpsSerial(1); // UART matériel n°1 de l'ESP32, remappé sur la broche trouvée
 TinyGPSPlus gps;
-#if JOYSTICK_LOCAL
-const DetecteurGps<HardwareSerial>::Broche BROCHES_GPS[] = { { 44, "D7" } }; // D2, D6, D10 : pris par le joystick local
-#else
-const DetecteurGps<HardwareSerial>::Broche BROCHES_GPS[] = { { 44, "D7" }, { 43, "D6" }, { 3, "D2" }, { 9, "D10" } };
-#endif
 const unsigned long BAUDS_GPS[] = { 9600, 115200, 38400, 57600, 19200, 4800 };
 DetecteurGps<HardwareSerial> detecteurGps(gpsSerial, BROCHES_GPS, sizeof(BROCHES_GPS) / sizeof(BROCHES_GPS[0]),
                                           BAUDS_GPS, sizeof(BAUDS_GPS) / sizeof(BAUDS_GPS[0]));
@@ -202,10 +236,10 @@ struct CommandeSource {
   unsigned long ms = 0;
   bool recue = false;
 };
-CommandeSource cmdManette, cmdIhm, cmdLocal;
+CommandeSource cmdManette, cmdIhm;
 
-enum SourcePilote { PILOTE_AUCUN, PILOTE_MANETTE, PILOTE_IHM, PILOTE_JOYSTICK_LOCAL, PILOTE_ARRET_URGENCE };
-const char* NOMS_PILOTES[] = { "aucun", "manette", "ihm", "joystick-local", "arret-urgence" };
+enum SourcePilote { PILOTE_AUCUN, PILOTE_MANETTE, PILOTE_IHM, PILOTE_ARRET_URGENCE };
+const char* NOMS_PILOTES[] = { "aucun", "manette", "ihm", "arret-urgence" };
 SourcePilote piloteActuel = PILOTE_AUCUN;
 
 unsigned long arretUrgenceDebutMs = 0;
@@ -227,8 +261,7 @@ float mesBatterie = 0, mesSoc = 0, mesCourant = 0;
 const char* mesEtatBMS = "OK";
 float distanceTotale = 0.0;
 
-// Joystick physique affiché dans l'IHM : celui de la Manette (reçu en WiFi),
-// ou le joystick local si JOYSTICK_LOCAL = 1.
+// Joystick physique affiché dans l'IHM : celui de la Manette (reçu en WiFi).
 float mesJoystickAxeX = 0;
 float mesJoystickAxeY = 0;
 bool mesJoystickBouton = false;
@@ -288,8 +321,8 @@ void appliquerMoteur(int pwr, int pinPwmAvant, int pinPwmArriere) {
 }
 
 void appliquerCommandes(int pwrRoueG, int pwrRoueD) {
-  appliquerMoteur(pwrRoueG, PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR);
-  appliquerMoteur(pwrRoueD, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR);
+  appliquerMoteur(INVERSER_ROUE_G ? -pwrRoueG : pwrRoueG, PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR);
+  appliquerMoteur(INVERSER_ROUE_D ? -pwrRoueD : pwrRoueD, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR);
   dernierPwrRoueG = pwrRoueG;
   dernierPwrRoueD = pwrRoueD;
   if (pwrRoueG != 0 || pwrRoueD != 0) {
@@ -304,7 +337,7 @@ bool robotEnMouvement() {
 }
 
 // =========================================================
-// ARBITRAGE DES COMMANDES (Manette / IHM / joystick local)
+// ARBITRAGE DES COMMANDES (Manette / IHM)
 // =========================================================
 void enregistrerCommande(CommandeSource& c, int rg, int rd) {
   c.rg = constrain(rg, -100, 100);
@@ -334,8 +367,6 @@ void mettreAJourPilotage() {
 
   if (arretUrgenceActif()) {
     source = PILOTE_ARRET_URGENCE;
-  } else if (commandeActive(cmdLocal)) {
-    source = PILOTE_JOYSTICK_LOCAL; g = cmdLocal.rg; d = cmdLocal.rd;
   } else if (commandeActive(cmdManette)) {
     source = PILOTE_MANETTE; g = cmdManette.rg; d = cmdManette.rd;
   } else if (commandeActive(cmdIhm)) {
@@ -349,34 +380,6 @@ void mettreAJourPilotage() {
   }
   if (g != dernierPwrRoueG || d != dernierPwrRoueD) appliquerCommandes(g, d);
 }
-
-// =========================================================
-// JOYSTICK LOCAL (uniquement si JOYSTICK_LOCAL = 1)
-// =========================================================
-#if JOYSTICK_LOCAL
-void lireJoystickLocal() {
-  bool boutonAppuye = (digitalRead(PIN_JOYSTICK_SW) == LOW); // actif à l'état bas (pull-up interne)
-  int dx = analogRead(PIN_JOYSTICK_X) - JOYSTICK_CENTRE;
-  int dy = analogRead(PIN_JOYSTICK_Y) - JOYSTICK_CENTRE;
-
-  // Si la Manette WiFi est présente, c'est elle qu'on affiche dans l'IHM.
-  if (!manettePresente) {
-    mesJoystickAxeX = constrain((float)dx / (float)JOYSTICK_CENTRE, -1.0, 1.0);
-    mesJoystickAxeY = constrain((float)dy / (float)JOYSTICK_CENTRE, -1.0, 1.0);
-    mesJoystickBouton = boutonAppuye;
-  }
-
-  if (boutonAppuye) {
-    declencherArretUrgence(DUREE_ARRET_BOUTON_MS);
-    return;
-  }
-  if (abs(dx) < JOYSTICK_ZONE_MORTE && abs(dy) < JOYSTICK_ZONE_MORTE) return; // au repos : les autres sources gardent la main
-
-  float avance = constrain(-(float)dy / (float)JOYSTICK_CENTRE, -1.0, 1.0); // retirer le - si l'effet est inversé
-  float tourne = constrain((float)dx / (float)JOYSTICK_CENTRE, -1.0, 1.0);
-  enregistrerCommande(cmdLocal, (int)((avance + tourne) * 100), (int)((avance - tourne) * 100));
-}
-#endif
 
 // =========================================================
 // CAPTEURS ET TÉLÉMÉTRIE
@@ -401,12 +404,15 @@ float socDepuisTensionCellule(float v) {
 }
 
 void rafraichirMesures(float deltaTSec) {
-  mesBatterie = analogRead(PIN_BATTERIE_ADC) * (3.3 / 4095.0) * 4.0;
-  mesCourant = analogRead(PIN_COURANT_ADC) * (3.3 / 4095.0);
+  // analogReadMilliVolts : tension corrigée par l'étalonnage d'usine de l'ADC (plus juste qu'analogRead)
+  mesBatterie = analogReadMilliVolts(PIN_BATTERIE_ADC) / 1000.0 * RAPPORT_DIVISEUR_BATTERIE;
+  mesCourant = (analogReadMilliVolts(PIN_COURANT_ADC) / 1000.0 - COURANT_OFFSET_V) * COURANT_AMPERES_PAR_VOLT;
+  if (mesCourant < 0) mesCourant = 0;
   mesSoc = socDepuisTensionCellule(mesBatterie / NB_CELLULES_EQUIVALENT);
 
   mesEtatBMS = "OK";
-  if (mesBatterie < SEUIL_SOUS_TENSION_PACK) mesEtatBMS = "SOUS-TENSION";
+  if (mesBatterie < TENSION_BATTERIE_ABSENTE) { mesEtatBMS = "ABSENTE"; mesSoc = 0; } // banc d'essai sans batterie
+  else if (mesBatterie < SEUIL_SOUS_TENSION_PACK) mesEtatBMS = "SOUS-TENSION";
   else if (mesBatterie > SEUIL_SURTENSION_PACK) mesEtatBMS = "SURTENSION";
   else if (mesCourant > SEUIL_SURINTENSITE) mesEtatBMS = "SURINTENSITE";
 
@@ -436,7 +442,8 @@ String listeBrochesGps() {
 
 String descriptionBrocheGps() {
   if (detecteurGps.etat() != DetecteurGps<HardwareSerial>::TROUVE) return "";
-  return String(detecteurGps.nomBroche()) + " (GPIO" + String(detecteurGps.gpio()) + ")";
+  String nom = detecteurGps.nomBroche(), gpio = "GPIO" + String(detecteurGps.gpio());
+  return nom == gpio ? nom : nom + " (" + gpio + ")"; // "GPIO14" ou "D7 (GPIO44)"
 }
 
 void lancerDetectionGps(const char* raison, bool visible) {
@@ -457,7 +464,9 @@ void gererDetectionGps() {
 
   if (detecteurGps.vientDeTrouver()) {
     Serial.printf("[GPS] ✅ Module GPS détecté sur %s à %lu bauds.\n", descriptionBrocheGps().c_str(), detecteurGps.vitesse());
-    if (detecteurGps.gpio() != 44) Serial.println("[GPS] (Ce n'est pas D7, mais ça fonctionne : rien à changer.)");
+    if (detecteurGps.gpio() != BROCHES_GPS[0].gpio) {
+      Serial.printf("[GPS] (Ce n'est pas %s comme prévu, mais ça fonctionne : rien à changer.)\n", BROCHES_GPS[0].nom);
+    }
     if (memoireGps.getInt("gpio", -1) != detecteurGps.gpio() || memoireGps.getULong("bauds", 0) != detecteurGps.vitesse()) {
       memoireGps.putInt("gpio", detecteurGps.gpio());
       memoireGps.putULong("bauds", detecteurGps.vitesse());
@@ -473,8 +482,9 @@ void gererDetectionGps() {
         Serial.println("[GPS] ⚠️ Des données arrivent mais ne sont pas des trames GPS valides : vérifier le fil GND commun "
                        "et la vitesse du module. Nouvel essai toutes les 10 s.");
       } else {
-        Serial.printf("[GPS] ❌ Aucun GPS trouvé (broches %s, toutes vitesses). Vérifier : fil TX du GPS -> D7, "
-                      "VCC -> 3V3 (ou 5V selon le module), GND -> GND. Nouvel essai toutes les 10 s.\n", listeBrochesGps().c_str());
+        Serial.printf("[GPS] ❌ Aucun GPS trouvé (broches %s, toutes vitesses). Vérifier : fil TX du GPS -> %s, "
+                      "VCC -> 3V3 (ou 5V selon le module), GND -> GND. Nouvel essai toutes les 10 s.\n",
+                      listeBrochesGps().c_str(), BROCHES_GPS[0].nom);
       }
     }
   }
@@ -703,6 +713,7 @@ void construireTelemetrie(String& t) {
   jsonChampTexte(t, "staSsid", etatSta == STA_CONNECTE ? WiFi.SSID() : String(""));
   jsonChampTexte(t, "staIp", etatSta == STA_CONNECTE ? WiFi.localIP().toString() : String(""));
   jsonChampInt(t, "uptime", (long)(millis() / 1000));
+  jsonChampTexte(t, "carte", NOM_CARTE);
   t.remove(t.length() - 1);
   t += "}";
 }
@@ -1046,16 +1057,24 @@ void setup() {
   Serial.println();
   Serial.print("ID=");
   Serial.println(IDENTITE);
+  Serial.printf("Carte : %s — moteurs GPIO %d/%d (gauche) %d/%d (droite), LED GPIO %d, batterie GPIO %d, GPS %s\n",
+                NOM_CARTE, PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR,
+                PIN_LED_STATUT, PIN_BATTERIE_ADC, BROCHES_GPS[0].nom);
 
   pinMode(PIN_ROUE_G_PWM_AV, OUTPUT);
   pinMode(PIN_ROUE_G_PWM_AR, OUTPUT);
   pinMode(PIN_ROUE_D_PWM_AV, OUTPUT);
   pinMode(PIN_ROUE_D_PWM_AR, OUTPUT);
   pinMode(PIN_LED_STATUT, OUTPUT);
-  appliquerCommandes(0, 0);
-#if JOYSTICK_LOCAL
-  pinMode(PIN_JOYSTICK_SW, INPUT_PULLUP);
+  appliquerCommandes(0, 0); // attache aussi les broches au PWM
+  for (int pin : { PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR }) {
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
+    analogWriteFrequency(pin, FREQUENCE_PWM_MOTEURS);
+#else
+    (void)pin;
+    analogWriteFrequency(FREQUENCE_PWM_MOTEURS);
 #endif
+  }
 
   Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS");
   memoireGps.begin("gps", false);
@@ -1095,9 +1114,6 @@ void loop() {
   lireGPS();
   gererDetectionGps();
   mettreAJourLed();
-#if JOYSTICK_LOCAL
-  lireJoystickLocal();
-#endif
   mettreAJourPilotage(); // coupe aussi les moteurs si plus aucune commande fraîche
   surveillerClients();
   gererWifiExterne();

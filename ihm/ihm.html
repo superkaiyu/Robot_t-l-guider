@@ -204,7 +204,7 @@
                 <rect x="22" y="4" width="4" height="8" rx="2" fill="#60a5fa"/>
                 <rect x="9" y="36" width="8" height="7" rx="2.5" fill="#8c93b8"/><rect x="31" y="36" width="8" height="7" rx="2.5" fill="#8c93b8"/>
             </svg>
-            <div><h1>Robot téléguidé</h1><small>XIAO ESP32-S3 · roues · GPS · WiFi</small></div>
+            <div><h1>Robot téléguidé</h1><small id="label-carte">ESP32-S3 · roues · GPS · WiFi</small></div>
         </div>
         <div class="pastilles">
             <div class="pastille"><span class="status-dot" id="dot-esp32"></span><div><b>Robot</b><small id="label-esp32-status">Déconnecté</small></div></div>
@@ -609,6 +609,7 @@
                 if (data.ihmClients !== undefined) t += ` · ${data.ihmClients} IHM en temps réel`;
                 t += data.staConnecte ? ` · Robot aussi sur « ${data.staSsid} » (http://${data.staIp})` : ' · pas de réseau externe';
                 if (data.uptime !== undefined) t += ` · allumé depuis ${Math.floor(data.uptime / 60)} min ${data.uptime % 60} s`;
+                if (data.carte) { t = `Robot : ${data.carte} · ` + t; $('label-carte').textContent = `${data.carte} · roues · GPS · WiFi`; }
                 $('reseau-info').textContent = t;
             }
             if (data.pilote !== undefined) afficherPilote(data.pilote);
@@ -626,7 +627,7 @@
         // ==================== GPS ====================
         const ETATS_GPS = {
             'detection':  { badge: 'Détection du module...', couleur: 'rgba(96,165,250,0.25)', texte: '#93c5fd', dot: 'warn',
-                            note: 'Le robot cherche sur quelle broche (D7, D6, D2, D10) et à quelle vitesse (9600, 115200... bauds) le GPS envoie ses données. Quelques secondes suffisent.' },
+                            note: 'Le robot cherche sur quelle broche et à quelle vitesse (9600, 115200... bauds) le GPS envoie ses données. Quelques secondes suffisent.' },
             'fix':        { badge: 'Position acquise', couleur: 'rgba(52,211,153,0.25)', texte: '#6ee7b7', dot: 'ok',
                             note: 'Position reçue du module GPS, transmise par le WiFi du robot.' },
             'simulation': { badge: 'Simulation', couleur: 'rgba(192,132,252,0.25)', texte: '#d8b4fe', dot: 'ok',
@@ -634,7 +635,7 @@
             'recherche':  { badge: 'Recherche satellites', couleur: 'rgba(251,191,36,0.25)', texte: '#fcd34d', dot: 'warn',
                             note: 'Le module GPS est bien câblé et communique avec l’ESP32 (données reçues). Il lui faut maintenant une vue dégagée sur le ciel pour calculer sa position : dehors ou contre une fenêtre, compter 1 à 5 minutes au premier démarrage.' },
             'absent':     { badge: 'Module non détecté', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
-                            note: 'Le robot a essayé toutes ses broches libres et toutes les vitesses courantes sans recevoir de données GPS (nouvel essai automatique toutes les 10 s). Vérifier le câblage sur l\u2019ESP32 robot (celui SANS joystick) : fil TX du GPS → D7 (ou D6, D2, D10), VCC → 3V3 (ou 5V selon le module), GND → GND. La LED du module GPS doit être allumée.' },
+                            note: 'Le robot a essayé toutes ses broches libres et toutes les vitesses courantes sans recevoir de données GPS (nouvel essai automatique toutes les 10 s). Vérifier le câblage sur l\u2019ESP32 robot : fil TX du GPS → GPIO14 sur l\u2019ESP32-S3 N16R8 (D7 sur une XIAO), VCC → 3V3 (ou 5V selon le module), GND → GND. Le RX du module reste libre. La LED du module GPS doit être allumée.' },
             'illisible':  { badge: 'Données illisibles', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
                             note: 'Le robot reçoit des données du GPS mais ne peut pas les décoder : vérifier la vitesse série (9600 bauds par défaut pour l’Air530) et le fil de masse commun.' },
         };
@@ -684,7 +685,7 @@
             $('val-gps-heure').textContent = data.gpsHeureUTC || '—';
             if (data.gpsBroche !== undefined) {
                 $('val-gps-broche').textContent = data.gpsBroche ? `${data.gpsBroche} · ${data.gpsBauds} bauds (détecté automatiquement)`
-                    : etat === 'detection' ? `recherche en cours (${data.gpsEssai || '...'})` : `rien trouvé sur ${data.gpsBrochesTestees || 'D7'}`;
+                    : etat === 'detection' ? `recherche en cours (${data.gpsEssai || '...'})` : `rien trouvé sur ${data.gpsBrochesTestees || '?'}`;
             }
             $('val-gps-caracteres').textContent = data.gpsCaracteres ?? '—';
             $('val-gps-trames').textContent = data.gpsTramesOk !== undefined ? `${data.gpsTramesOk} / ${data.gpsTramesKo}` : '—';
@@ -951,9 +952,11 @@
             $('anneau-soc-texte').textContent = `${Math.round(soc)} %`;
 
             const badge = $('badge-etat-bms');
-            badge.textContent = etat; badge.className = 'badge-etat-bms ' + (etat==='OK' ? 'ok' : 'alerte');
+            const absente = etat === 'ABSENTE'; // banc d'essai : pas de batterie sur le pont diviseur
+            badge.textContent = absente ? 'NON BRANCHÉE' : etat;
+            badge.className = 'badge-etat-bms' + (absente ? '' : etat === 'OK' ? ' ok' : ' alerte');
             const alerte = $('bms-alerte');
-            if (etat !== 'OK') {
+            if (etat !== 'OK' && !absente) {
                 alerte.classList.add('visible');
                 const messages = {'SOUS-TENSION':'Sous-tension du pack — décharge à couper.', 'SURTENSION':'Surtension du pack — charge à couper.', 'SURINTENSITE':'Courant excessif détecté.'};
                 $('bms-alerte-texte').textContent = messages[etat] || 'Protection déclenchée';

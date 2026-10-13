@@ -23,7 +23,8 @@ Usage :
 Options :
   --port COM5       force le port (sans détection)
   --cli CHEMIN      chemin vers arduino-cli(.exe) si le script ne le trouve pas
-  --fqbn FQBN       carte (défaut : esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc)
+  --fqbn FQBN       carte, si différente de celle prévue (Robot : ESP32-S3 N16R8,
+                    Manette : XIAO ESP32S3 — voir FQBN_PAR_ROLE)
 """
 import argparse
 import json
@@ -43,8 +44,14 @@ except AttributeError:
 DOSSIER_OUTILS = Path(__file__).resolve().parent
 RACINE = DOSSIER_OUTILS.parent
 FICHIER_CONFIG = DOSSIER_OUTILS / "cartes_esp32.json"
-# CDCOnBoot=cdc : le Moniteur Série passe par l'USB natif (nécessaire pour l'identification "?")
-FQBN_DEFAUT = "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc"
+# Carte de chaque rôle :
+#  - Robot : ESP32-S3 N16R8 ("ESP32S3 Dev Module"), 16 Mo de flash. USB CDC On Boot désactivé :
+#    le Moniteur Série et le téléversement passent par le port USB-C marqué "UART".
+#  - Manette : Seeed XIAO ESP32S3, Moniteur Série sur l'USB natif (CDCOnBoot=cdc).
+FQBN_PAR_ROLE = {
+    "robot": "esp32:esp32:esp32s3:FlashSize=16M,CDCOnBoot=default",
+    "manette": "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc",
+}
 VID_CONNUS = {0x303A: "ESP32 USB natif", 0x10C4: "CP210x", 0x1A86: "CH340"}
 SKETCHS = {"robot": RACINE / "robot", "manette": RACINE / "manette"}
 NOMS = {"robot": "ROBOT", "manette": "MANETTE"}
@@ -249,12 +256,15 @@ def televerser(serial, role, cfg, args):
     cli = trouver_arduino_cli(cfg, args.cli)
     port, info = choisir_port(serial, role, cfg, args.port)
     print(f"\n=== {NOMS[role]} : compilation et téléversement sur {port} ===")
-    commande = [cli, *options_config_ide(), "compile", "--fqbn", args.fqbn, "--upload", "-p", port, str(SKETCHS[role])]
+    fqbn = args.fqbn or FQBN_PAR_ROLE[role]
+    commande = [cli, *options_config_ide(), "compile", "--fqbn", fqbn, "--upload", "-p", port, str(SKETCHS[role])]
     print(" ".join(f'"{c}"' if " " in c else c for c in commande))
     if subprocess.run(commande).returncode != 0:
         print(f"\n[ÉCHEC] {NOMS[role]} non téléversé. Causes fréquentes :")
         print(f"  - le Moniteur Série de l'Arduino IDE est ouvert sur {port} : ferme-le ;")
         print("  - carte bloquée : maintiens BOOT, appuie sur RESET, relâche BOOT, puis relance ;")
+        if role == "robot":
+            print("  - ESP32-S3 N16R8 : le câble doit être sur le port USB-C marqué « UART » ;")
         print("  - carte « esp32 » (Espressif) ou bibliothèque « TinyGPSPlus » non installée dans l'IDE.")
         return False
 
@@ -294,7 +304,7 @@ def main():
     parser.add_argument("cible", nargs="?", choices=["robot", "manette"], help="pour « moniteur »")
     parser.add_argument("--port")
     parser.add_argument("--cli")
-    parser.add_argument("--fqbn", default=FQBN_DEFAUT)
+    parser.add_argument("--fqbn", default=None)
     args = parser.parse_args()
 
     cfg = charger_config()
