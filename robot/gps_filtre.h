@@ -5,7 +5,8 @@
   d'une seconde à l'autre elle varie de 2 à 5 m dehors, et de 10 à 20 m en intérieur
   ou près d'une fenêtre. Ce filtre :
     - IGNORE les mesures trop imprécises (HDOP > 8, moins de 4 satellites) ;
-    - quand le robot est IMMOBILE (moteurs arrêtés) : MOYENNE les mesures pendant 30 s,
+    - quand le robot est IMMOBILE (moteurs arrêtés) : MOYENNE les mesures pendant 60 s,
+      en donnant plus de poids aux mesures précises (HDOP faible, beaucoup de satellites),
       puis FIGE la position jusqu'au prochain mouvement. La dérive lente du GPS (en intérieur, elle peut
       atteindre plusieurs dizaines de mètres en quelques minutes) et les sauts
       (reflets) ne déplacent PAS la position ;
@@ -28,7 +29,7 @@ class FiltreGps {
   static constexpr float HDOP_MAX = 8.0f;
   static constexpr int SATELLITES_MIN = 4;
   static constexpr float SAUT_MAX_M = 50.0f;
-  static constexpr int MESURES_AVANT_FIGEAGE = 30; // immobile : 30 s de moyenne, puis position figée
+  static constexpr int MESURES_AVANT_FIGEAGE = 60; // immobile : 60 s de moyenne, puis position figée
 
   // À appeler à chaque NOUVELLE mesure du GPS (en général 1 fois par seconde).
   void ajouter(double lat, double lon, float hdop, int satellites, float vitesseKmh, bool moteursActifs) {
@@ -67,11 +68,14 @@ class FiltreGps {
 
     // Immobile : moyenne des 30 premières mesures, puis position FIGÉE jusqu'au prochain
     // mouvement (la dérive lente du GPS ne peut plus faire "glisser" le robot).
-    if (!immobileFlag) { immobileFlag = true; nMoyenne = 1; }
+    if (!immobileFlag) { immobileFlag = true; nMoyenne = 1; sommePoids = poids(hdop, satellites); }
     if (nMoyenne >= MESURES_AVANT_FIGEAGE) return;
+    // Moyenne pondérée : une mesure à HDOP 1 compte 4 fois plus qu'une mesure à HDOP 2.
     nMoyenne++;
-    latF += (lat - latF) / nMoyenne;
-    lonF += (lon - lonF) / nMoyenne;
+    float w = poids(hdop, satellites);
+    sommePoids += w;
+    latF += (lat - latF) * (w / sommePoids);
+    lonF += (lon - lonF) * (w / sommePoids);
   }
 
   bool pret() const { return initialise; }
@@ -93,16 +97,21 @@ class FiltreGps {
   }
 
  private:
+  static float poids(float hdop, int satellites) {
+    float h = hdop < 0.5f ? 0.5f : hdop;
+    return (satellites >= 6 ? 1.0f : 0.5f) / (h * h);
+  }
   bool initialise = false, immobileFlag = false, porteALaMain = false;
   double latF = 0, lonF = 0, latBrute = 0, lonBrute = 0;
   float hdopActuel = 99;
   int nMoyenne = 0, sautsConsecutifs = 0, mesuresRapides = 0, mesuresLentes = 0;
+  double sommePoids = 1;
   double histLat[MESURES_MARCHE] = {}, histLon[MESURES_MARCHE] = {}; // 5 dernières mesures
   int iHistorique = 0, nHistorique = 0;
   unsigned long rejetees = 0;
 
   void repartirDe(double lat, double lon) {
     latF = lat; lonF = lon;
-    nMoyenne = 1; sautsConsecutifs = 0;
+    nMoyenne = 1; sautsConsecutifs = 0; sommePoids = 1;
   }
 };

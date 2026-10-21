@@ -26,7 +26,7 @@
 | Fichier | Rôle |
 |---|---|
 | `robot/robot.ino` | ESP32 **Robot** (ESP32-S3 N16R8) : point d'accès WiFi, GPS, moteurs, télémétrie, sert l'IHM |
-| `robot/gps_detection.h`, `robot/gps_filtre.h` | Détection automatique du GPS, filtre de position |
+| `robot/gps_detection.h`, `robot/gps_filtre.h`, `robot/gps_satellites.h` | Détection automatique du GPS, filtre de position, signal de chaque satellite |
 | `robot/ws_serveur.h` | Mini serveur WebSocket (aucune bibliothèque à installer) |
 | `robot/ihm_html.h` | IHM compressée embarquée dans le robot (**générée**, ne pas modifier à la main) |
 | `robot/secrets_exemple.h` | Modèle pour les réseaux WiFi externes optionnels |
@@ -132,7 +132,9 @@ Ce qu'on doit voir :
 - **Joystick virtuel** à glisser (souris ou doigt), **clavier** (flèches ou ZQSD, *Espace* = arrêt d'urgence), ou **manette USB** branchée au PC.
 - **Barres Roue G / Roue D** : la puissance réellement appliquée par le robot (pas seulement celle demandée).
 - **Qui pilote** : IHM, ESP32 Manette ou arrêt d'urgence, en direct.
-- Onglets **Vue d'ensemble**, **GPS** (position, satellites, trajet, liens OpenStreetMap / Google Maps), **Batterie**, **Roues**.
+- Onglets **Vue d'ensemble**, **GPS** (position, signal de chaque satellite et carte du ciel, trajet, liens OpenStreetMap / Google Maps), **Batterie**, **Roues**, **Système** (diagnostic des coupures et des redémarrages).
+- Une petite coupure WiFi ne remet plus tout à zéro : l'IHM affiche « Signal faible » et grise les valeurs. La liaison n'est déclarée perdue qu'après 6 s.
+- Si le robot redémarre, un bandeau l'indique avec la cause (par exemple « chute de tension »).
 - Aucune bibliothèque externe : tout fonctionne sans Internet (seule la carte OpenStreetMap optionnelle en a besoin). Utilisable aussi sur téléphone.
 - Si le robot a encore un ancien firmware (sans WebSocket), l'IHM repasse automatiquement en HTTP (« HTTP (secours) »).
 - Robot non connecté : **mode démo** qui simule le robot.
@@ -177,3 +179,39 @@ Modifier `ihm/ihm.html`, puis `python tools/generer_ihm_h.py` et re-téléverser
 - **robot qui roule (moteurs), ou GPS vraiment porté à la main** (plus de 3,5 km/h pendant 5 s et au moins 4 m parcourus) : le trajet suit.
 
 Dans l'onglet GPS, les points pâles montrent les mesures brutes (le bruit) ; la ligne est le trajet filtré.
+
+## Précision du GPS
+
+L'onglet **GPS › Réception des satellites** montre la force du signal (dB-Hz) de chaque satellite et sa position dans le ciel :
+
+| Signal | Signification |
+|---|---|
+| ≥ 35 dB-Hz (vert) | très bon |
+| 25 à 35 (orange) | moyen |
+| < 25 (rouge) | trop faible pour servir |
+
+Il faut au moins **4 satellites au-dessus de 30 dB-Hz** pour obtenir une position, et **6 ou plus** pour qu'elle soit précise.
+
+Ce qui améliore la précision :
+
+1. **Ciel dégagé** : loin des murs, des arbres et des toits. En intérieur, les signaux sont trop faibles.
+2. **Antenne vers le ciel** : la face plate (céramique) du module vers le haut, jamais couverte par la main.
+3. **GPS éloigné de l'électronique** : au moins 10 cm de l'ESP32, des moteurs et des câbles USB. Leur bruit électrique brouille le GPS (signaux qui chutent dans l'onglet).
+4. **Temps** : laisse le GPS allumé 10 à 15 min. La précision s'améliore à mesure qu'il reçoit les informations des satellites.
+5. **Alimentation stable** : chaque redémarrage du robot oblige le GPS à tout recommencer.
+6. **Robot immobile** : la position est moyennée pendant 60 s, en donnant plus de poids aux mesures précises (HDOP faible, beaucoup de satellites).
+
+Même dans de bonnes conditions, un module GPS d'entrée de gamme reste précis à **2 à 5 m** environ.
+
+## Coupures WiFi : trouver la cause
+
+L'onglet **Système** de l'IHM affiche le diagnostic : coupures, signal WiFi de chaque appareil, redémarrages du robot et leur cause, et des conseils adaptés. Les causes les plus fréquentes :
+
+| Ce que montre l'onglet Système | Cause | Solution |
+|---|---|---|
+| Redémarrages, cause « chute de tension » | Alimentation trop faible (pics de courant du WiFi ou des moteurs) | Batterie externe de qualité, câble USB court et épais. En dernier recours, baisser `PUISSANCE_WIFI` dans `robot.ino`. |
+| Redémarrages, cause « mise sous tension » | La batterie externe se coupe toute seule (consommation trop faible) | Batterie externe sans arrêt automatique, ou alimentation par le PC |
+| Signal en dessous de −75 dBm | Trop loin, ou signal bloqué (le corps humain absorbe le WiFi) | Rapprocher le PC, ne pas tenir le robot contre soi, ne pas couvrir l'antenne (bout de la carte) |
+| Coupures sans redémarrage ni signal faible | Windows quitte ROBOT_ESP32 (réseau sans Internet) pour un autre réseau connu | Désactiver la connexion automatique des autres réseaux WiFi pendant les essais |
+
+Quand le WiFi est faible, le robot n'abandonne plus la connexion : il saute simplement les mesures qui ne passent pas et reprend dès que possible.

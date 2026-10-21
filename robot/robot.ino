@@ -76,6 +76,9 @@
 #include "gps_filtre.h"    // filtre : la position ne "bouge" plus quand le robot est immobile
 #include "ihm_html.h"    // page de l'IHM compressée (générée depuis ihm/ihm.html, voir README)
 #include "ws_serveur.h"  // mini serveur WebSocket (aucune bibliothèque à installer)
+#include "gps_satellites.h" // force du signal de chaque satellite (diagnostic de réception)
+#include <esp_system.h>     // cause du dernier redémarrage
+#include <esp_wifi.h>       // force du signal des appareils connectés au point d'accès
 
 const char* IDENTITE = "ROBOT"; // renvoyé sur le port série quand on tape "?"
 
@@ -119,6 +122,21 @@ WiFiUDP udp;                      // Manette : commandes à 25 Hz
 const uint16_t PORT_UDP_ROBOT = 4210;
 const unsigned long INTERVALLE_TELEMETRIE_WS_MS = 50; // 20 fois par seconde
 unsigned long derniereTelemetrieWsMs = 0;
+unsigned long derniersSatellitesWsMs = 0;
+
+// Puissance d'émission WiFi : maximale pour la meilleure portée. Si le robot redémarre
+// tout seul (onglet Système de l'IHM : cause "chute de tension"), l'alimentation ne suit
+// pas les pics du WiFi : essayer WIFI_POWER_15dBm, ou mieux, une meilleure alimentation.
+const wifi_power_t PUISSANCE_WIFI = WIFI_POWER_19_5dBm;
+
+// =========================================================
+// DIAGNOSTIC (onglet Système de l'IHM)
+// =========================================================
+Preferences memoireDiag;              // compteurs gardés en flash d'un démarrage à l'autre
+uint32_t nbDemarrages = 0, nbChutesTension = 0;
+const char* causeDemarrage = "inconnue";
+volatile uint32_t apConnexions = 0, apDeconnexions = 0; // modifiés par les événements WiFi
+uint32_t apDeconnexionsAffichees = 0;
 
 // =========================================================
 // BROCHAGE — choisi automatiquement selon la carte sélectionnée dans l'Arduino IDE
@@ -181,6 +199,7 @@ const float COURANT_AMPERES_PAR_VOLT = 1.0;
 // vitesse (9600, 115200, 38400...) sont trouvées seules et mémorisées pour le démarrage suivant.
 HardwareSerial gpsSerial(1); // UART matériel n°1 de l'ESP32, remappé sur la broche trouvée
 TinyGPSPlus gps;
+SatellitesGps satellitesGps;  // signal de chaque satellite (trames GSV)
 const unsigned long BAUDS_GPS[] = { 9600, 115200, 38400, 57600, 19200, 4800 };
 DetecteurGps<HardwareSerial> detecteurGps(gpsSerial, BROCHES_GPS, sizeof(BROCHES_GPS) / sizeof(BROCHES_GPS[0]),
                                           BAUDS_GPS, sizeof(BAUDS_GPS) / sizeof(BAUDS_GPS[0]));
@@ -282,6 +301,65 @@ enum EtatSTA { STA_INACTIF, STA_CONNEXION, STA_CONNECTE, STA_ABANDON };
 EtatSTA etatSta = STA_INACTIF;
 int reseauStaIndex = -1;
 unsigned long debutConnexionStaMs = 0;
+
+// =========================================================
+// DIAGNOSTIC : redémarrages et WiFi
+// =========================================================
+const char* texteCauseDemarrage(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "mise sous tension";
+    case ESP_RST_EXT:       return "bouton RESET (ou ouverture du Moniteur Série)";
+    case ESP_RST_SW:        return "redémarrage demandé par le programme";
+    case ESP_RST_PANIC:     return "plantage du programme";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:       return "programme bloqué (chien de garde)";
+    case ESP_RST_DEEPSLEEP: return "réveil de veille profonde";
+    case ESP_RST_BROWNOUT:  return "chute de tension (alimentation trop faible)";
+    default:                return "inconnue";
+  }
+}
+
+void initialiserDiagnostic() {
+  esp_reset_reason_t raison = esp_reset_reason();
+  causeDemarrage = texteCauseDemarrage(raison);
+  memoireDiag.begin("diag", false);
+  nbDemarrages = memoireDiag.getUInt("demarrages", 0) + 1;
+  memoireDiag.putUInt("demarrages", nbDemarrages);
+  nbChutesTension = memoireDiag.getUInt("chutes", 0);
+  if (raison == ESP_RST_BROWNOUT) memoireDiag.putUInt("chutes", ++nbChutesTension);
+  Serial.printf("[Système] Démarrage n°%lu, cause : %s\n", (unsigned long)nbDemarrages, causeDemarrage);
+  if (raison == ESP_RST_BROWNOUT) {
+    Serial.println("[Système] ⚠️ Le robot a redémarré à cause d'une CHUTE DE TENSION : alimentation trop faible "
+                   "(batterie externe qui se coupe, câble trop fin, pics du WiFi ou des moteurs).");
+  }
+}
+
+// Événements WiFi (appelés par le système, hors de loop() : on ne fait que compter)
+void surEvenementWifi(WiFiEvent_t evenement, WiFiEventInfo_t info) {
+  (void)info;
+  if (evenement == ARDUINO_EVENT_WIFI_AP_STACONNECTED) apConnexions = apConnexions + 1;
+  else if (evenement == ARDUINO_EVENT_WIFI_AP_STADISCONNECTED) apDeconnexions = apDeconnexions + 1;
+}
+
+void signalerDeconnexionsWifi() {
+  if (apDeconnexions == apDeconnexionsAffichees) return;
+  apDeconnexionsAffichees = apDeconnexions;
+  Serial.printf("[WiFi] Un appareil a quitté le point d'accès (%lu déconnexion(s) depuis le démarrage). "
+                "Souvent : trop loin, ou signal bloqué par le corps / un obstacle.\n", (unsigned long)apDeconnexionsAffichees);
+}
+
+// Force du signal reçu de chaque appareil connecté au point d'accès, ex. "-48,-71"
+String signalAppareilsWifi() {
+  wifi_sta_list_t liste;
+  String r;
+  if (esp_wifi_ap_get_sta_list(&liste) != ESP_OK) return r;
+  for (int i = 0; i < liste.num; i++) {
+    if (i) r += ",";
+    r += String((int)liste.sta[i].rssi);
+  }
+  return r;
+}
 
 // =========================================================
 // LED
@@ -503,6 +581,7 @@ void lireGPS() {
   while (gpsSerial.available() > 0) {
     char c = gpsSerial.read();
     gps.encode(c);
+    satellitesGps.caractere(c);
     detecteurGps.caractereRecu(c);
     dernierCaractereGpsMs = millis();
     if (echoNmea && detecteurGps.etat() == DetecteurGps<HardwareSerial>::TROUVE) Serial.write(c);
@@ -714,6 +793,15 @@ void construireTelemetrie(String& t) {
   jsonChampTexte(t, "staIp", etatSta == STA_CONNECTE ? WiFi.localIP().toString() : String(""));
   jsonChampInt(t, "uptime", (long)(millis() / 1000));
   jsonChampTexte(t, "carte", NOM_CARTE);
+  jsonChampInt(t, "demarrages", (long)nbDemarrages);
+  jsonChampTexte(t, "causeDemarrage", causeDemarrage);
+  jsonChampInt(t, "chutesTension", (long)nbChutesTension);
+  jsonChampInt(t, "memLibre", (long)ESP.getFreeHeap());
+  jsonChampInt(t, "memMin", (long)ESP.getMinFreeHeap());
+  jsonChampInt(t, "wifiCanal", WiFi.channel());
+  jsonChampTexte(t, "apSignal", signalAppareilsWifi());
+  jsonChampInt(t, "apDeconnexions", (long)apDeconnexions);
+  jsonChampInt(t, "gpsSatsForts", satellitesGps.nombreAvecSignal(30));
   t.remove(t.length() - 1);
   t += "}";
 }
@@ -811,6 +899,30 @@ void surConnexionWs(uint8_t client, bool connecte) {
   }
 }
 
+// {"sats":[["G",13,40,60,41],...]} : système, numéro, élévation, azimut, signal (dB-Hz)
+void construireSatellites(String& t) {
+  t = "{\"sats\":[";
+  t.reserve(800);
+  bool premier = true;
+  for (int i = 0; i < satellitesGps.taille(); i++) {
+    if (!satellitesGps.estFrais(i)) continue;
+    const SatellitesGps::Satellite& s = satellitesGps.sat(i);
+    if (!premier) t += ",";
+    premier = false;
+    t += "[\""; t += s.systeme; t += "\","; t += String(s.numero); t += ","; t += String(s.elevation);
+    t += ","; t += String(s.azimut); t += ","; t += String(s.snr); t += "]";
+  }
+  t += "]}";
+}
+
+void diffuserSatellitesWs() {
+  if (ws.nbClients() == 0 || millis() - derniersSatellitesWsMs < 1000) return;
+  derniersSatellitesWsMs = millis();
+  String t;
+  construireSatellites(t);
+  ws.diffuser(t.c_str(), t.length());
+}
+
 void diffuserTelemetrieWs() {
   if (ws.nbClients() == 0 || millis() - derniereTelemetrieWsMs < INTERVALLE_TELEMETRIE_WS_MS) return;
   derniereTelemetrieWsMs = millis();
@@ -850,7 +962,9 @@ void handleGpsDetecter() {
 void handleGps() {
   String t = "{";
   ajouterChampsGPS(t);
-  t.remove(t.length() - 1);
+  String sats;
+  construireSatellites(sats);           // {"sats":[...]}
+  t += sats.substring(1, sats.length() - 1);
   t += "}";
   ajouterEnTetesCORS();
   server.send(200, "application/json", t);
@@ -998,6 +1112,7 @@ int choisirReseauExterne(int& canal) {
 }
 
 void demarrerWifi() {
+  WiFi.onEvent(surEvenementWifi);
   WiFi.mode(WIFI_AP_STA);
   WiFi.setSleep(false);          // latence minimale pour les commandes
   WiFi.setAutoReconnect(false);  // pas de balayage en boucle qui perturberait le point d'accès
@@ -1005,7 +1120,9 @@ void demarrerWifi() {
   int canal = AP_CANAL_PAR_DEFAUT;
   reseauStaIndex = choisirReseauExterne(canal);
 
+  if (reseauStaIndex < 0) WiFi.mode(WIFI_AP); // pas de réseau externe : la radio ne sert qu'au point d'accès
   WiFi.softAP(ap_ssid, ap_password, canal);
+  WiFi.setTxPower(PUISSANCE_WIFI);
   Serial.print("[WiFi] Point d'accès créé : ");
   Serial.print(ap_ssid);
   Serial.print(" (canal ");
@@ -1076,6 +1193,7 @@ void setup() {
 #endif
   }
 
+  initialiserDiagnostic();
   Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS");
   memoireGps.begin("gps", false);
   lancerDetectionGps("démarrage", true); // ouvre l'UART du GPS sur la broche/vitesse à essayer
@@ -1119,6 +1237,8 @@ void loop() {
   gererWifiExterne();
   afficherEtatGpsSerie();
   diffuserTelemetrieWs();
+  diffuserSatellitesWs();
+  signalerDeconnexionsWifi();
   repondreIdentification();
 
   if (millis() - dernierCalculMs > intervalleMesureMs) {

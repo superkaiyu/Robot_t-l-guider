@@ -168,6 +168,29 @@
         .gps-actions label { font-size: 0.85em; color: var(--attenue); }
         .gps-carte { width: 100%; height: 320px; border: 1px solid var(--bord); border-radius: 14px; margin-top: 12px; display: none; background: #0b0e1c; }
         .gps-carte.visible { display: block; }
+
+        /* ---------- Réception des satellites ---------- */
+        .reception { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
+        .ciel { width: 100%; max-width: 280px; aspect-ratio: 1; background: #0b0e1c; border: 1px solid var(--bord); border-radius: 50%; }
+        .barres-sats { display: flex; align-items: flex-end; gap: 4px; height: 170px; padding: 8px 8px 0; background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 14px; overflow-x: auto; }
+        .barre-sat { flex: 1 0 22px; max-width: 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: 0.62em; color: var(--attenue); }
+        .barre-sat .remplissage { width: 100%; border-radius: 4px 4px 0 0; min-height: 3px; }
+        .barre-sat b { font-size: 1.15em; color: var(--texte); }
+        .legende-sats { font-size: 0.75em; color: var(--attenue); margin-top: 6px; }
+        .legende-sats i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
+
+        /* ---------- Système / liaison ---------- */
+        .bandeau { display: none; align-items: center; gap: 12px; max-width: 1456px; width: calc(100% - 44px); margin: 14px auto 0; padding: 10px 16px; border-radius: 12px; box-sizing: border-box;
+                   background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.5); color: #fde68a; font-size: 0.9em; }
+        .bandeau.visible { display: flex; }
+        .bandeau span { flex: 1; }
+        .bandeau button { background: none; border: none; color: inherit; font-size: 1.3em; cursor: pointer; }
+        body.instable .tuile .kpi-value, body.instable .stick-dot { opacity: 0.45; transition: opacity .3s; }
+        .conseils { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
+        .conseils li { padding: 10px 14px; border-radius: 12px; font-size: 0.88em; line-height: 1.45; border: 1px solid var(--bord); background: rgba(13,16,32,0.45); }
+        .conseils li.alerte { border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.08); }
+        .conseils li.attention { border-color: rgba(251,191,36,0.5); background: rgba(251,191,36,0.08); }
+        .conseils li.ok { border-color: rgba(52,211,153,0.45); background: rgba(52,211,153,0.07); }
         .deux-colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 
         .pied { text-align: center; font-size: 0.78em; color: var(--attenue); padding: 0 22px 22px; }
@@ -183,12 +206,14 @@
             .connexion { width: 100%; } .connexion input { flex: 1; width: auto; }
             .pastille small { max-width: 130px; }
             .grille { padding: 12px; gap: 12px; }
+            .bandeau { width: calc(100% - 24px); }
             .carte { padding: 14px; }
             .joystick { --taille: 170px; }
             .barre-fond { height: 130px; }
             .tuiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
             .tuile .kpi-value { font-size: 1.35em; }
-            .batterie-haut, .deux-colonnes { grid-template-columns: 1fr; }
+            .batterie-haut, .deux-colonnes, .reception { grid-template-columns: 1fr; }
+            .ciel { margin: 0 auto; display: block; }
             .anneau { margin: 0 auto; }
         }
     </style>
@@ -218,6 +243,8 @@
             <button class="btn btn-primaire" id="btn-connect-esp32">Se connecter</button>
         </div>
     </header>
+
+    <div class="bandeau" id="bandeau-alerte" role="alert"><span id="bandeau-texte"></span><button id="bandeau-fermer" aria-label="Fermer">×</button></div>
 
     <main class="grille">
         <!-- ===================== PILOTAGE ===================== -->
@@ -275,6 +302,7 @@
                 <button class="tab-btn" data-tab="tab-gps">GPS</button>
                 <button class="tab-btn" data-tab="tab-bms">Batterie</button>
                 <button class="tab-btn" data-tab="tab-roues">Roues</button>
+                <button class="tab-btn" data-tab="tab-systeme">Système</button>
             </nav>
 
             <!-- ---------- Vue d'ensemble ---------- -->
@@ -345,6 +373,19 @@
                 <iframe class="gps-carte" id="gps-carte" title="Carte OpenStreetMap"></iframe>
 
                 <div class="section">
+                    <div class="section-titre"><h2>Réception des satellites <span class="badge-etat-bms" id="badge-reception">—</span></h2></div>
+                    <div class="reception">
+                        <canvas id="cielCanvas" class="ciel" width="560" height="560" title="Position des satellites dans le ciel (centre = au-dessus, bord = horizon, N en haut)"></canvas>
+                        <div>
+                            <div class="barres-sats" id="barres-sats"><span style="margin:auto;font-size:0.85em">En attente des satellites...</span></div>
+                            <div class="legende-sats">Signal (dB-Hz) :<i style="background:var(--vert)"></i>≥ 35 très bon<i style="background:var(--orange)"></i>25–35 moyen<i style="background:var(--rouge)"></i>&lt; 25 trop faible<i style="background:var(--discret)"></i>pas reçu</div>
+                            <div class="note-box" id="note-reception">Il faut au moins 4 satellites au-dessus de 30 dB-Hz pour une position, 6 ou plus pour une bonne précision.</div>
+                            <div class="note-box"><b>Pour gagner en précision :</b> ciel bien dégagé (loin des murs, arbres et toits) · antenne du module tournée vers le ciel, jamais couverte par la main · module GPS à 10 cm au moins de l'ESP32 et des moteurs (leur bruit électrique brouille le GPS) · laisser le GPS allumé 10 à 15 min (la précision s'améliore) · alimentation stable (chaque redémarrage du robot oblige le GPS à tout recommencer) · robot immobile : sa position est moyennée sur 60 s.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
                     <div class="section-titre"><h2>Trajet GPS</h2><button class="btn" id="btn-reset-trace-gps">Réinitialiser</button></div>
                     <canvas id="traceGpsCanvas" class="trace-canvas" width="900" height="420"></canvas>
                     <div class="trace-scale-label num" id="trace-gps-label">En attente d'une position GPS...</div>
@@ -375,6 +416,20 @@
                     <div class="chart-box"><canvas id="currentChart"></canvas></div>
                 </div>
                 <div class="note-box">Pas de mesure cellule par cellule sur cette configuration (une seule broche ADC batterie) : un déséquilibre entre cellules ne serait pas détecté.</div>
+            </div>
+
+            <!-- ---------- Système ---------- -->
+            <div id="tab-systeme" class="tab-pane">
+                <div class="section-titre"><h2>Diagnostic de la liaison et du robot</h2></div>
+                <ul class="conseils" id="diag-conseils"><li>Connecte-toi au robot pour voir le diagnostic.</li></ul>
+                <div class="tuiles">
+                    <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Coupures PC ↔ robot</div><div class="kpi-value" id="diag-coupures">0</div><div class="unite" id="diag-coupure-duree">depuis l'ouverture de la page</div></div>
+                    <div class="tuile" style="--accent:var(--cyan)"><div class="libelle">Signal WiFi le plus faible</div><div class="kpi-value" id="diag-signal">—</div><div class="unite" id="diag-signal-qualite">dBm</div></div>
+                    <div class="tuile" style="--accent:var(--violet)"><div class="libelle">Redémarrages du robot</div><div class="kpi-value" id="diag-redemarrages">0</div><div class="unite">vus pendant cette session</div></div>
+                    <div class="tuile" style="--accent:var(--rouge)"><div class="libelle">Chutes de tension</div><div class="kpi-value" id="diag-chutes">—</div><div class="unite">depuis le 1er téléversement</div></div>
+                </div>
+                <div class="gps-details" id="diag-details"></div>
+                <div class="note-box"><b>Force du signal WiFi</b> (dBm, plus c'est proche de 0, mieux c'est) : au-dessus de −60 excellent · −60 à −70 bon · −70 à −80 faible, coupures possibles · en dessous de −80 coupures fréquentes. Le corps humain absorbe beaucoup le WiFi : ne tiens pas le robot contre toi, et ne couvre pas le bout de la carte (l'antenne).</div>
             </div>
 
             <!-- ---------- Roues ---------- -->
@@ -496,7 +551,11 @@
         let transport = null;               // 'ws' (temps réel) ou 'http' (secours, ancien firmware)
         let wsSocket = null, wsEchecs = 0, wsRelanceTimer = null;
         let cmdEnCours = false, telemetrieEnCours = false, telemetrieTimer = null;
-        const HTTP_TIMEOUT_MS = 800, HTTP_PERTE_LIAISON_MS = 2000, INTERVALLE_TELEMETRIE_HTTP_MS = 200;
+        // Liaison : "signal faible" après 1,2 s sans données (les valeurs restent affichées en grisé),
+        // "perdue" seulement après 6 s. Une petite coupure ne fait plus tout clignoter.
+        const HTTP_TIMEOUT_MS = 800, SEUIL_INSTABLE_MS = 1200, HTTP_PERTE_LIAISON_MS = 6000, INTERVALLE_TELEMETRIE_HTTP_MS = 200;
+        let liaisonInstable = false, liaisonPerdue = false, debutCoupureMs = 0, nbCoupures = 0, dureeDerniereCoupure = null;
+        let dernierUptime = null, redemarragesVus = 0, dernieresDonnees = {};
         let derniereCmdEnvoyee = null, derniereCmdEnvoyeeMs = 0;
         const INTERVALLE_BOUCLE_MS = 50;       // commandes calculées 20 fois par seconde
         const INTERVALLE_CMD_ACTIVE_MS = 100;  // commande non nulle répétée (le robot coupe après 500 ms)
@@ -614,7 +673,130 @@
             }
             if (data.pilote !== undefined) afficherPilote(data.pilote);
             if (data.pwrRoueG !== undefined) afficherBarresRoues(Number(data.pwrRoueG) || 0, Number(data.pwrRoueD) || 0);
+            if (data.uptime !== undefined) {
+                // Le robot a redémarré si son temps de fonctionnement repart en arrière
+                if (dernierUptime !== null && data.uptime + 2 < dernierUptime) {
+                    redemarragesVus++;
+                    const cause = data.causeDemarrage || 'inconnue';
+                    let texte = `⚠️ Le robot vient de redémarrer (cause : ${cause}).`;
+                    if (/tension/.test(cause)) texte += ' Son alimentation est trop faible : voir l\u2019onglet Système.';
+                    else texte += ' Chaque redémarrage coupe la liaison et oblige le GPS à retrouver ses satellites.';
+                    afficherBandeau(texte);
+                }
+                dernierUptime = data.uptime;
+            }
+            dernieresDonnees = data;
         }
+
+        function afficherBandeau(texte) { $('bandeau-texte').textContent = texte; $('bandeau-alerte').classList.add('visible'); }
+        $('bandeau-fermer').addEventListener('click', () => $('bandeau-alerte').classList.remove('visible'));
+
+        function qualiteSignal(dbm) {
+            if (dbm >= -60) return ['excellent', 'var(--vert)'];
+            if (dbm >= -70) return ['bon', 'var(--vert)'];
+            if (dbm >= -80) return ['faible : coupures possibles', 'var(--orange)'];
+            return ['très faible : coupures fréquentes', 'var(--rouge)'];
+        }
+
+        // Onglet Système : mis à jour 2 fois par seconde
+        setInterval(() => {
+            const d = dernieresDonnees, connecte = esp32Url && httpConnecte;
+            $('diag-coupures').textContent = nbCoupures;
+            $('diag-coupure-duree').textContent = dureeDerniereCoupure === null ? 'depuis l\u2019ouverture de la page' : `dernière : ${(dureeDerniereCoupure / 1000).toFixed(1)} s`;
+            $('diag-redemarrages').textContent = redemarragesVus;
+            const signaux = (d.apSignal || '').split(',').filter(x => x !== '').map(Number);
+            if (connecte && signaux.length) {
+                const min = Math.min(...signaux), [q, c] = qualiteSignal(min);
+                $('diag-signal').textContent = min; $('diag-signal').style.color = c; $('diag-signal-qualite').textContent = `dBm · ${q}`;
+            }
+            if (d.chutesTension !== undefined) $('diag-chutes').textContent = d.chutesTension;
+            if (!connecte) return;
+
+            const lignes = [
+                ['Carte', d.carte || '—'],
+                ['Allumé depuis', d.uptime !== undefined ? `${Math.floor(d.uptime / 3600)} h ${Math.floor(d.uptime / 60) % 60} min ${d.uptime % 60} s` : '—'],
+                ['Cause du dernier démarrage', d.causeDemarrage || '—'],
+                ['Démarrages au total', d.demarrages ?? '—'],
+                ['Appareils sur ROBOT_ESP32', d.apClients !== undefined ? `${d.apClients} (signal : ${signaux.map(x => x + ' dBm').join(', ') || '—'})` : '—'],
+                ['Signal reçu par la Manette', d.manetteConnectee ? `${d.manetteRssi} dBm` : 'Manette non connectée'],
+                ['Déconnexions WiFi (vues par le robot)', d.apDeconnexions ?? '—'],
+                ['Canal WiFi', d.wifiCanal ?? '—'],
+                ['Mémoire libre (minimum)', d.memLibre !== undefined ? `${Math.round(d.memLibre / 1024)} Ko (${Math.round(d.memMin / 1024)} Ko)` : '—'],
+                ['Liaison avec cette IHM', `${transport === 'ws' ? 'WebSocket' : 'HTTP'} · latence ${$('val-latence').textContent}`],
+            ];
+            $('diag-details').innerHTML = lignes.map(([k, v]) => `<div>${k} : <b>${String(v).replace(/</g, '&lt;')}</b></div>`).join('');
+
+            // Conseils selon ce qu'on observe
+            const conseils = [];
+            if (/tension/.test(d.causeDemarrage || '') || redemarragesVus > 0 && d.chutesTension > 0)
+                conseils.push(['alerte', 'Le robot redémarre à cause d\u2019une <b>chute de tension</b> : alimentation trop faible. Utilise une batterie externe qui ne se coupe pas toute seule (certaines s\u2019éteignent quand on consomme peu), un câble USB court et épais, ou baisse <code>PUISSANCE_WIFI</code> dans robot.ino. Chaque redémarrage coupe la liaison et le GPS repart de zéro.']);
+            else if (redemarragesVus > 0)
+                conseils.push(['attention', `Le robot a redémarré ${redemarragesVus} fois pendant cette session (cause : ${d.causeDemarrage}). S\u2019il était sur batterie externe, elle s\u2019est peut-être coupée : la cause affichée est alors « mise sous tension ».`]);
+            if (signaux.length && Math.min(...signaux) < -75)
+                conseils.push(['attention', `Signal WiFi faible (${Math.min(...signaux)} dBm) : rapproche le PC du robot, ne tiens pas le robot contre toi (le corps bloque le WiFi), ne couvre pas le bout de la carte où se trouve l\u2019antenne. Dehors, compte quelques dizaines de mètres de portée au maximum.`]);
+            if (nbCoupures > 0 && redemarragesVus === 0 && !(signaux.length && Math.min(...signaux) < -75))
+                conseils.push(['attention', `${nbCoupures} coupure(s) sans redémarrage du robot ni signal faible. Vérifie que Windows ne quitte pas le WiFi ROBOT_ESP32 pour un autre réseau qui a Internet (téléphone, box) : dans les paramètres WiFi, désactive la connexion automatique des autres réseaux pendant les essais.`]);
+            if (!conseils.length) conseils.push(['ok', 'Aucun problème détecté : liaison stable, pas de redémarrage du robot.']);
+            $('diag-conseils').innerHTML = conseils.map(([c, t]) => `<li class="${c}">${t}</li>`).join('');
+        }, 500);
+
+        // ---------- Satellites : force du signal et position dans le ciel ----------
+        const NOMS_SYSTEMES = { G: 'GPS', B: 'BeiDou', R: 'GLONASS', E: 'Galileo', Q: 'QZSS', '?': '?' };
+        function couleurSnr(snr) { return snr < 0 ? '#5d6490' : snr >= 35 ? '#34d399' : snr >= 25 ? '#fbbf24' : '#f87171'; }
+
+        function afficherSatellites(sats) {
+            const liste = sats.map(([sys, num, elev, az, snr]) => ({ sys, num, elev, az, snr })).sort((a, b) => b.snr - a.snr);
+            const forts = liste.filter(s => s.snr >= 30).length, recus = liste.filter(s => s.snr > 0).length;
+            const badge = $('badge-reception');
+            let texte, fond, couleur, note;
+            if (!liste.length) {
+                [texte, fond, couleur] = ['Aucun satellite', 'rgba(248,113,113,0.25)', '#fca5a5'];
+                note = 'Le module ne voit aucun satellite : il est en intérieur, son antenne est couverte, ou il vient de démarrer (attendre 1 min).';
+            } else if (forts >= 6) {
+                [texte, fond, couleur] = ['Bonne réception', 'rgba(52,211,153,0.25)', '#6ee7b7'];
+                note = `${forts} satellites au-dessus de 30 dB-Hz : une position précise (quelques mètres) est possible.`;
+            } else if (forts >= 4) {
+                [texte, fond, couleur] = ['Réception moyenne', 'rgba(251,191,36,0.25)', '#fcd34d'];
+                note = `${forts} satellites au-dessus de 30 dB-Hz : la position est possible mais moins précise. Plus de ciel dégagé = plus de satellites forts.`;
+            } else {
+                [texte, fond, couleur] = ['Réception insuffisante', 'rgba(248,113,113,0.25)', '#fca5a5'];
+                note = `Seulement ${forts} satellite(s) au-dessus de 30 dB-Hz (${recus} reçu(s) au total) : il en faut au moins 4, idéalement 6. Va dehors, loin des murs, antenne vers le ciel, et éloigne le GPS de l\u2019ESP32 et des moteurs.`;
+            }
+            badge.textContent = texte; badge.style.background = fond; badge.style.color = couleur;
+            $('note-reception').textContent = note;
+
+            $('barres-sats').innerHTML = liste.length ? liste.map(s => {
+                const h = s.snr > 0 ? Math.min(100, s.snr / 50 * 100) : 3;
+                const titre = `${NOMS_SYSTEMES[s.sys] || s.sys} n°${s.num} — ${s.snr > 0 ? s.snr + ' dB-Hz' : 'pas reçu'}${s.elev >= 0 ? `, ${s.elev}° au-dessus de l\u2019horizon` : ''}`;
+                return `<div class="barre-sat" title="${titre}"><b>${s.snr > 0 ? s.snr : ''}</b><div class="remplissage" style="height:${h}%;background:${couleurSnr(s.snr)}"></div>${s.sys}${s.num}</div>`;
+            }).join('') : '<span style="margin:auto;font-size:0.85em">Aucun satellite vu</span>';
+            dessinerCiel(liste);
+        }
+
+        function dessinerCiel(liste) {
+            const c = $('cielCanvas'), ctx = c.getContext('2d'), w = c.width, cx = w / 2, R = w / 2 - 30;
+            ctx.clearRect(0, 0, w, w);
+            ctx.strokeStyle = 'rgba(140,147,184,0.25)'; ctx.lineWidth = 1.5;
+            [0, 30, 60].forEach(e => { ctx.beginPath(); ctx.arc(cx, cx, R * (90 - e) / 90, 0, 2 * Math.PI); ctx.stroke(); });
+            ctx.beginPath(); ctx.moveTo(cx - R, cx); ctx.lineTo(cx + R, cx); ctx.moveTo(cx, cx - R); ctx.lineTo(cx, cx + R); ctx.stroke();
+            ctx.fillStyle = '#8c93b8'; ctx.font = 'bold 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('N', cx, 14); ctx.fillText('S', cx, w - 14); ctx.fillText('E', w - 14, cx); ctx.fillText('O', 14, cx);
+            ctx.font = '15px system-ui, sans-serif'; ctx.fillStyle = '#5d6490';
+            ctx.fillText('30°', cx + 6, cx - R * 60 / 90 + 12); ctx.fillText('60°', cx + 6, cx - R * 30 / 90 + 12);
+            liste.filter(s => s.elev >= 0 && s.az >= 0).forEach(s => {
+                const r = R * (90 - s.elev) / 90, a = s.az * Math.PI / 180;
+                const x = cx + r * Math.sin(a), y = cx - r * Math.cos(a);
+                ctx.fillStyle = couleurSnr(s.snr); ctx.beginPath(); ctx.arc(x, y, 13, 0, 2 * Math.PI); ctx.fill();
+                ctx.fillStyle = '#0d1020'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.fillText(s.num, x, y + 1);
+            });
+        }
+        dessinerCiel([]);
+
+        // En mode HTTP de secours, les satellites sont lus sur /gps
+        setInterval(async () => {
+            if (transport !== 'http' || !esp32Url) return;
+            try { const r = await fetchAvecTimeout(`${esp32Url}/gps`); if (r.ok) { const g = await r.json(); if (g.sats) afficherSatellites(g.sats); } } catch (e) {}
+        }, 1500);
 
         function reinitialiserAffichageLiaisons() {
             setDot('dot-manette-esp32', ''); $('label-manette-esp32').textContent = 'Inconnue';
@@ -766,14 +948,27 @@
         function majEtatLiaison(ok) {
             if (!esp32Url) return;
             if (ok) {
-                derniereReponseOkMs = performance.now();
+                const maintenant = performance.now();
+                if (liaisonInstable || liaisonPerdue) { // fin d'une coupure
+                    nbCoupures++; dureeDerniereCoupure = maintenant - debutCoupureMs;
+                    liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
+                    if (httpConnecte) setEsp32Status('ok', `Connecté · ${esp32Host}`);
+                }
+                derniereReponseOkMs = maintenant;
                 if (!httpConnecte) {
                     httpConnecte = true; dernierTelemetryTimestamp = null;
                     setEsp32Status('ok', `Connecté · ${esp32Host}`);
                     $('btn-connect-esp32').textContent = 'Déconnecter'; $('btn-connect-esp32').classList.add('connected'); setMode(true);
                 }
             } else if (httpConnecte) {
-                if (performance.now() - derniereReponseOkMs > HTTP_PERTE_LIAISON_MS) {
+                const ecart = performance.now() - derniereReponseOkMs;
+                if (ecart > SEUIL_INSTABLE_MS && ecart <= HTTP_PERTE_LIAISON_MS) {
+                    if (!liaisonInstable) { liaisonInstable = true; debutCoupureMs = derniereReponseOkMs; document.body.classList.add('instable'); }
+                    setEsp32Status('warn', `Signal faible · ${(ecart / 1000).toFixed(1)} s sans données`);
+                }
+                if (ecart > HTTP_PERTE_LIAISON_MS) {
+                    if (!liaisonInstable) debutCoupureMs = derniereReponseOkMs;
+                    liaisonInstable = false; liaisonPerdue = true; document.body.classList.remove('instable');
                     httpConnecte = false; setEsp32Status('warn', 'Liaison perdue, reconnexion...'); setMode(false);
                     reinitialiserAffichageLiaisons(); afficherGPSDeconnecte();
                     if (wsSocket) wsSocket.close(); // force une reconnexion propre
@@ -885,6 +1080,7 @@
         }
 
         function traiterTelemetrieRecue(data) {
+            if (data.sats && data.vitesseRoueG === undefined) { afficherSatellites(data.sats); return; } // message "satellites" (1/s)
             try {
                 const vG = Number(data.vitesseRoueG)||0, vD = Number(data.vitesseRoueD)||0;
                 const maintenant = performance.now();
@@ -906,6 +1102,7 @@
             try { localStorage.setItem('ipRobot', host); } catch (e) {}
             derniereReponseOkMs = performance.now(); tentativeConnexionDepuisMs = performance.now();
             derniereCmdEnvoyee = null; wsEchecs = 0; transport = null;
+            dernierUptime = null; liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
             setEsp32Status('warn', 'Connexion en cours...');
             $('btn-connect-esp32').textContent = 'Annuler';
             ouvrirWebSocket();
@@ -915,6 +1112,7 @@
             esp32Url = null; esp32Host = null; httpConnecte = false; transport = null;
             clearTimeout(wsRelanceTimer); arreterHttp();
             if (wsSocket) { const s = wsSocket; wsSocket = null; s.close(); }
+            liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
             setEsp32Status('', 'Déconnecté'); $('btn-connect-esp32').textContent = 'Se connecter'; $('btn-connect-esp32').classList.remove('connected'); setMode(false);
             reinitialiserAffichageLiaisons(); afficherGPSDeconnecte();
         }

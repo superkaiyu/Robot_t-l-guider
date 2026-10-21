@@ -14,6 +14,9 @@
   bloquer la boucle du robot plusieurs secondes — et donc le chien de garde des
   moteurs. Ici, une trame qui ne peut pas partir est simplement sautée, et un client
   bloqué ~2 s est déconnecté.
+  WIFI FAIBLE : si seule une partie d'une trame part, le reste est gardé et envoyé dès
+  que possible (les trames suivantes sont sautées en attendant) : la connexion survit
+  à un signal faible au lieu de se couper et de se reconnecter sans arrêt.
 */
 #pragma once
 #include <Arduino.h>
@@ -132,6 +135,8 @@ class ServeurWebSocket {
     size_t n = 0;
     unsigned long dernierMs = 0;
     uint8_t tramesSautees = 0;
+    uint8_t attente[3072];   // fin d'une trame partiellement envoyée
+    size_t nAttente = 0, posAttente = 0;
   };
 
   WiFiServer serveur;
@@ -159,6 +164,7 @@ class ServeurWebSocket {
         clients[i].n = 0;
         clients[i].dernierMs = millis();
         clients[i].tramesSautees = 0;
+        clients[i].nAttente = clients[i].posAttente = 0;
         return;
       }
     }
@@ -170,6 +176,7 @@ class ServeurWebSocket {
     clients[i].tcp.stop();
     clients[i].etat = LIBRE;
     clients[i].n = 0;
+    clients[i].nAttente = clients[i].posAttente = 0;
     if (etaitOuvert && rappelConnexion) rappelConnexion(i, false);
   }
 
@@ -177,6 +184,7 @@ class ServeurWebSocket {
     Client& c = clients[i];
     if (c.etat == LIBRE) return;
     if (!c.tcp.connected()) { fermer(i); return; }
+    if (!viderAttente(i)) return; // termine l'envoi d'une trame commencée (WiFi lent)
 
     int dispo = c.tcp.available();
     if (dispo > 0) {
@@ -287,18 +295,48 @@ class ServeurWebSocket {
   }
 
   // Envoi non bloquant : tout ou rien (une trame coupée en deux rendrait le flux invalide).
+  // Envoie la fin d'une trame commencée. Renvoie false si le client a été fermé.
+  bool viderAttente(uint8_t i) {
+    Client& c = clients[i];
+    if (c.posAttente >= c.nAttente) return true;
+    int fd = c.tcp.fd();
+    if (fd < 0) { fermer(i); return false; }
+    int r = send(fd, c.attente + c.posAttente, c.nAttente - c.posAttente, MSG_DONTWAIT);
+    if (r > 0) {
+      c.posAttente += r;
+      if (c.posAttente >= c.nAttente) { c.nAttente = c.posAttente = 0; c.tramesSautees = 0; }
+      return true;
+    }
+    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { fermer(i); return false; }
+    return true;
+  }
+
+  // Envoi non bloquant d'une trame entière : jamais deux trames mélangées dans le flux.
   bool ecrire(uint8_t i, const uint8_t* donnees, size_t n) {
-    int fd = clients[i].tcp.fd();
+    Client& c = clients[i];
+    if (!viderAttente(i)) return false;
+    if (c.posAttente < c.nAttente || n > sizeof(c.attente)) { sauter(i); return false; } // une trame est encore en cours
+    int fd = c.tcp.fd();
     if (fd < 0) { fermer(i); return false; }
     int r = send(fd, donnees, n, MSG_DONTWAIT);
-    if (r == (int)n) { clients[i].tramesSautees = 0; return true; }
-    if (r > 0 || (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK)) { fermer(i); return false; }
-    if (++clients[i].tramesSautees > MAX_TRAMES_SAUTEES) fermer(i); // le navigateur ne lit plus
+    if (r == (int)n) { c.tramesSautees = 0; return true; }
+    if (r > 0) { // envoi partiel : on garde la fin pour plus tard
+      memcpy(c.attente, donnees + r, n - r);
+      c.nAttente = n - r;
+      c.posAttente = 0;
+      return true;
+    }
+    if (r < 0 && errno != EAGAIN && errno != EWOULDBLOCK) { fermer(i); return false; }
+    sauter(i);
     return false;
   }
 
+  void sauter(uint8_t i) {
+    if (++clients[i].tramesSautees > MAX_TRAMES_SAUTEES) fermer(i); // le navigateur ne lit plus depuis ~2 s
+  }
+
   void envoyerTrame(uint8_t i, uint8_t opcode, const uint8_t* donnees, size_t n) {
-    static uint8_t trame[2048];
+    static uint8_t trame[3072];
     size_t e = n < 126 ? 2 : 4;
     if (e + n > sizeof(trame)) return; // trop gros pour ce mini serveur (la télémétrie fait ~1 Ko)
     trame[0] = 0x80 | opcode;
