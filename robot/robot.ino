@@ -49,7 +49,7 @@
   MONITEUR SÉRIE (115200 bauds) : "?" -> "ID=ROBOT GPS=..." (utilisé par tools/televerser.py
   pour trouver le bon port COM), "g" -> trames GPS brutes, "d" -> relancer la détection GPS.
 
-  ⚠️ À PROPOS DU GPS : un module GPS calcule sa position en ÉCOUTANT les satellites.
+  À PROPOS DU GPS : un module GPS calcule sa position en ÉCOUTANT les satellites.
   Sans ciel dégagé, pas de position. Le transport des données (GPS -> ESP32 -> IHM /
   Manette) passe uniquement par le fil série puis le WiFi de l'ESP32.
   Pour tester toute la chaîne en intérieur, passer GPS_SIMULATION à 1 ci-dessous.
@@ -77,6 +77,7 @@
 #include "ihm_html.h"    // page de l'IHM compressée (générée depuis ihm/ihm.html, voir README)
 #include "ws_serveur.h"  // mini serveur WebSocket (aucune bibliothèque à installer)
 #include "gps_satellites.h" // force du signal de chaque satellite (diagnostic de réception)
+#include "journal.h"        // enregistrement de chaque session dans la flash (boîte noire)
 #include <esp_system.h>     // cause du dernier redémarrage
 #include <esp_wifi.h>       // force du signal des appareils connectés au point d'accès
 
@@ -137,6 +138,16 @@ uint32_t nbDemarrages = 0, nbChutesTension = 0;
 const char* causeDemarrage = "inconnue";
 volatile uint32_t apConnexions = 0, apDeconnexions = 0; // modifiés par les événements WiFi
 uint32_t apDeconnexionsAffichees = 0;
+
+// =========================================================
+// JOURNAL DES SESSIONS (onglet Sessions de l'IHM, tools/sessions.py)
+// =========================================================
+JournalSession journal;
+const char CODES_PILOTES[] = "-MIU"; // aucun, Manette, IHM, Urgence (même ordre que SourcePilote)
+
+void noterEvenement(const char* code, const String& texte) {
+  journal.evenement(millis() / 1000, code, texte);
+}
 
 // =========================================================
 // BROCHAGE — choisi automatiquement selon la carte sélectionnée dans l'Arduino IDE
@@ -330,7 +341,7 @@ void initialiserDiagnostic() {
   if (raison == ESP_RST_BROWNOUT) memoireDiag.putUInt("chutes", ++nbChutesTension);
   Serial.printf("[Système] Démarrage n°%lu, cause : %s\n", (unsigned long)nbDemarrages, causeDemarrage);
   if (raison == ESP_RST_BROWNOUT) {
-    Serial.println("[Système] ⚠️ Le robot a redémarré à cause d'une CHUTE DE TENSION : alimentation trop faible "
+    Serial.println("[Système] Attention : le robot a redémarré à cause d'une CHUTE DE TENSION : alimentation trop faible "
                    "(batterie externe qui se coupe, câble trop fin, pics du WiFi ou des moteurs).");
   }
 }
@@ -345,6 +356,7 @@ void surEvenementWifi(WiFiEvent_t evenement, WiFiEventInfo_t info) {
 void signalerDeconnexionsWifi() {
   if (apDeconnexions == apDeconnexionsAffichees) return;
   apDeconnexionsAffichees = apDeconnexions;
+  noterEvenement("wifi-", "Un appareil a quitté le WiFi du robot");
   Serial.printf("[WiFi] Un appareil a quitté le point d'accès (%lu déconnexion(s) depuis le démarrage). "
                 "Souvent : trop loin, ou signal bloqué par le corps / un obstacle.\n", (unsigned long)apDeconnexionsAffichees);
 }
@@ -455,6 +467,10 @@ void mettreAJourPilotage() {
     piloteActuel = source;
     Serial.print("[Pilotage] Source active : ");
     Serial.println(NOMS_PILOTES[source]);
+    // Journal : seulement les changements utiles (un relâchement du joystick n'est pas noté)
+    if (source == PILOTE_ARRET_URGENCE) noterEvenement("urgence", "Arrêt d'urgence");
+    else if (source == PILOTE_MANETTE) noterEvenement("pilote", "Pilotage par la manette");
+    else if (source == PILOTE_IHM) noterEvenement("pilote", "Pilotage depuis l'IHM");
   }
   if (g != dernierPwrRoueG || d != dernierPwrRoueD) appliquerCommandes(g, d);
 }
@@ -502,6 +518,60 @@ void rafraichirMesures(float deltaTSec) {
 }
 
 // =========================================================
+// JOURNAL : une mesure par seconde quand il se passe quelque chose, toutes les 5 s sinon
+// =========================================================
+// Secondes depuis le 1er janvier 1970 (UTC) à partir d'une date du calendrier
+uint32_t secondesDepuis1970(int annee, int mois, int jour, int h, int m, int s) {
+  annee -= mois <= 2;
+  int era = annee / 400;
+  int yoe = annee - era * 400;
+  int doy = (153 * (mois + (mois > 2 ? -3 : 9)) + 2) / 5 + jour - 1;
+  int doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  long jours = (long)era * 146097 + doe - 719468;
+  return (uint32_t)(jours * 86400L + h * 3600L + m * 60L + s);
+}
+
+void enregistrerJournal() {
+  static unsigned long derniereMesureMs = 0;
+  static bool fixPrecedent = false;
+  static const char* etatBatteriePrecedent = "OK";
+  if (!journal.disponible()) return;
+
+  if (gpsFixValide != fixPrecedent) {
+    fixPrecedent = gpsFixValide;
+    noterEvenement(gpsFixValide ? "fix+" : "fix-", gpsFixValide ? "Position GPS trouvée" : "Position GPS perdue");
+  }
+  if (strcmp(mesEtatBMS, etatBatteriePrecedent) != 0) {
+    etatBatteriePrecedent = mesEtatBMS;
+    noterEvenement("batterie", String("Batterie : ") + mesEtatBMS);
+  }
+  // Heure réelle lue sur le GPS si l'IHM ne l'a pas encore donnée
+  if (gps.date.isValid() && gps.time.isValid() && gps.date.age() < 2000 && gps.date.year() >= 2024 && gps.date.year() < 2100) {
+    journal.horloge(secondesDepuis1970(gps.date.year(), gps.date.month(), gps.date.day(),
+                                       gps.time.hour(), gps.time.minute(), gps.time.second()), millis() / 1000);
+  }
+
+  bool activite = robotEnMouvement() || (filtreGps.pret() && !filtreGps.immobile());
+  if (millis() - derniereMesureMs < (activite ? 1000UL : 5000UL)) return;
+  derniereMesureMs = millis();
+
+  int rssiMin = 0;
+  wifi_sta_list_t appareils;
+  if (esp_wifi_ap_get_sta_list(&appareils) == ESP_OK) {
+    for (int i = 0; i < appareils.num; i++) if (appareils.sta[i].rssi < rssiMin) rssiMin = appareils.sta[i].rssi;
+  }
+  String l = String(millis() / 1000) + ",";
+  if (gpsFixValide) l += String(mesLatitude, 6) + "," + String(mesLongitude, 6) + ",1,";
+  else l += ",,0,";
+  l += String(gpsSatellites) + "," + String(gpsHdop, 1) + "," + String(gpsVitesseKmh, 1) + ",";
+  l += String(mesBatterie, 2) + "," + String(mesCourant, 2) + "," + String(consommationAh, 4) + ",";
+  l += String(dernierPwrRoueG) + "," + String(dernierPwrRoueD) + "," + CODES_PILOTES[piloteActuel] + ",";
+  l += String(ihmPresente ? 1 : 0) + "," + String(manettePresente ? 1 : 0) + ",";
+  if (rssiMin < 0) l += String(rssiMin);
+  journal.mesure(l);
+}
+
+// =========================================================
 // GPS : LECTURE DE LA POSITION (Air530, trames NMEA)
 // =========================================================
 int lireSatellitesVisibles(TinyGPSCustom& champ) {
@@ -541,7 +611,8 @@ void gererDetectionGps() {
   DetecteurGps<HardwareSerial>::Etat etat = detecteurGps.etat();
 
   if (detecteurGps.vientDeTrouver()) {
-    Serial.printf("[GPS] ✅ Module GPS détecté sur %s à %lu bauds.\n", descriptionBrocheGps().c_str(), detecteurGps.vitesse());
+    Serial.printf("[GPS] Module GPS détecté sur %s à %lu bauds.\n", descriptionBrocheGps().c_str(), detecteurGps.vitesse());
+    noterEvenement("gps", "GPS détecté sur " + descriptionBrocheGps() + " à " + String(detecteurGps.vitesse()) + " bauds");
     if (detecteurGps.gpio() != BROCHES_GPS[0].gpio) {
       Serial.printf("[GPS] (Ce n'est pas %s comme prévu, mais ça fonctionne : rien à changer.)\n", BROCHES_GPS[0].nom);
     }
@@ -557,10 +628,10 @@ void gererDetectionGps() {
     gpsDernierResultatIllisible = detecteurGps.illisible();
     if (detectionGpsVisible) {
       if (gpsDernierResultatIllisible) {
-        Serial.println("[GPS] ⚠️ Des données arrivent mais ne sont pas des trames GPS valides : vérifier le fil GND commun "
+        Serial.println("[GPS] Attention : des données arrivent mais ne sont pas des trames GPS valides : vérifier le fil GND commun "
                        "et la vitesse du module. Nouvel essai toutes les 10 s.");
       } else {
-        Serial.printf("[GPS] ❌ Aucun GPS trouvé (broches %s, toutes vitesses). Vérifier : fil TX du GPS -> %s, "
+        Serial.printf("[GPS] Aucun GPS trouvé (broches %s, toutes vitesses). Vérifier : fil TX du GPS -> %s, "
                       "VCC -> 3V3 (ou 5V selon le module), GND -> GND. Nouvel essai toutes les 10 s.\n",
                       listeBrochesGps().c_str(), BROCHES_GPS[0].nom);
       }
@@ -659,6 +730,7 @@ void surveillerClients() {
     manettePresente = false;
     mesJoystickAxeX = 0; mesJoystickAxeY = 0; mesJoystickBouton = false;
     Serial.println("[WiFi] ESP32 Manette déconnectée.");
+    noterEvenement("manette-", "Manette déconnectée");
     declencherClignotement(2);
   }
   if (ihmPresente && millis() - derniereRequeteIhmMs > TIMEOUT_CLIENT_MS) {
@@ -671,7 +743,8 @@ void noterRequeteManette() {
   derniereRequeteManetteMs = millis();
   if (!manettePresente) {
     manettePresente = true;
-    Serial.println("[WiFi] ESP32 Manette connectée !");
+    Serial.println("[WiFi] ESP32 Manette connectée.");
+    noterEvenement("manette+", "Manette connectée");
     declencherClignotement(5);
   }
 }
@@ -793,6 +866,9 @@ void construireTelemetrie(String& t) {
   jsonChampTexte(t, "staIp", etatSta == STA_CONNECTE ? WiFi.localIP().toString() : String(""));
   jsonChampInt(t, "uptime", (long)(millis() / 1000));
   jsonChampTexte(t, "carte", NOM_CARTE);
+  jsonChampInt(t, "session", (long)journal.numero());
+  jsonChampBool(t, "journalDispo", journal.disponible());
+  jsonChampBool(t, "journalPlein", journal.plein());
   jsonChampInt(t, "demarrages", (long)nbDemarrages);
   jsonChampTexte(t, "causeDemarrage", causeDemarrage);
   jsonChampInt(t, "chutesTension", (long)nbChutesTension);
@@ -879,6 +955,8 @@ void surMessageWs(uint8_t client, char* message, size_t longueur) {
     int rd = suite ? atoi(suite) : 0;
     enregistrerCommande(cmdIhm, rg, rd);
     mettreAJourPilotage();
+  } else if (message[0] == 'h' && message[1] == ',') { // heure du PC, envoyée par l'IHM à la connexion
+    journal.horloge(strtoul(message + 2, nullptr, 10), millis() / 1000);
   } else if (strcmp(message, "gpsdetect") == 0) {
     lancerDetectionGps("demandée depuis l'IHM", true);
   } else if (strcmp(message, "stop") == 0) {
@@ -893,6 +971,7 @@ void surMessageWs(uint8_t client, char* message, size_t longueur) {
 
 void surConnexionWs(uint8_t client, bool connecte) {
   Serial.printf("[WebSocket] IHM n°%d %s (%d connectée(s))\n", client, connecte ? "connectée" : "déconnectée", ws.nbClients());
+  noterEvenement(connecte ? "ihm+" : "ihm-", connecte ? "IHM connectée" : "IHM déconnectée");
   if (connecte) {
     noterRequeteIhm();
     derniereTelemetrieWsMs = 0; // envoie tout de suite un premier état complet
@@ -951,6 +1030,47 @@ void repondreIdentification() {
   }
 }
 
+// ---------- Sessions enregistrées ----------
+void handleSessions() {
+  String t;
+  journal.listeJson(t, millis() / 1000);
+  ajouterEnTetesCORS();
+  server.send(200, "application/json", t);
+}
+
+// Fichier CSV d'une session : /session?id=42
+void handleSession() {
+  uint32_t id = server.arg("id").toInt();
+  File f;
+  if (!journal.ouvrir(id, f)) {
+    ajouterEnTetesCORS();
+    server.send(404, "text/plain", "Session introuvable");
+    return;
+  }
+  // L'envoi du fichier occupe le robot une ou deux secondes : par sécurité, il s'arrête.
+  if (robotEnMouvement()) {
+    appliquerCommandes(0, 0);
+    declencherArretUrgence(1000);
+  }
+  ajouterEnTetesCORS();
+  server.sendHeader("Content-Disposition", "attachment; filename=\"session-" + String(id) + ".csv\"");
+  server.streamFile(f, "text/csv; charset=utf-8");
+  f.close();
+}
+
+void handleSessionSupprimer() {
+  bool ok = journal.supprimer(server.arg("id").toInt());
+  ajouterEnTetesCORS();
+  server.send(ok ? 200 : 400, "text/plain", ok ? "OK" : "Impossible de supprimer cette session");
+}
+
+// Heure du PC (IHM en mode HTTP de secours) : /heure?e=<secondes depuis 1970>
+void handleHeure() {
+  journal.horloge(strtoul(server.arg("e").c_str(), nullptr, 10), millis() / 1000);
+  ajouterEnTetesCORS();
+  server.send(200, "text/plain", "OK");
+}
+
 // Relance la détection du GPS (bouton de l'IHM en mode HTTP de secours)
 void handleGpsDetecter() {
   lancerDetectionGps("demandée depuis l'IHM", true);
@@ -976,7 +1096,7 @@ void handleGps() {
 // Accessible depuis un navigateur : http://<IP de l'ESP32>/wifiup
 // Utile uniquement si l'ESP32 a réussi à rejoindre WIFI-UP en STA.
 //
-// ⚠️ À COMPLÉTER avant que ça fonctionne réellement : remplace URL_PORTAIL,
+// À COMPLÉTER avant que ça fonctionne réellement : remplace URL_PORTAIL,
 // CHAMP_IDENTIFIANT et CHAMP_MOTDEPASSE ci-dessous par les valeurs exactes du
 // portail de l'IUT (Outils de développement du navigateur, onglet Réseau,
 // pendant une connexion normale au portail).
@@ -1051,7 +1171,7 @@ void handleWifiUpLogin() {
   }
 
   String reponse = "Requête envoyée au portail (code HTTP " + String(code) + ").<br>";
-  reponse += internetOk ? "✅ Accès Internet détecté, ça a fonctionné !" : "⚠️ Toujours pas d'accès Internet détecté — vérifie l'URL/les noms de champs en haut du fichier (voir commentaire À COMPLÉTER).";
+  reponse += internetOk ? "Accès Internet détecté, ça a fonctionné." : "Toujours pas d'accès Internet détecté — vérifie l'URL/les noms de champs en haut du fichier (voir commentaire À COMPLÉTER).";
 
   ajouterEnTetesCORS();
   server.send(200, "text/html", "<meta charset='UTF-8'><body style='font-family:sans-serif;background:#1e1e2f;color:#fff;padding:30px;'>" + reponse + "<br><br><a href='/wifiup' style='color:#4CAF50;'>Retour</a></body>");
@@ -1069,7 +1189,8 @@ void handleAide() {
   ajouterEnTetesCORS();
   server.send(200, "text/plain; charset=utf-8",
               "Robot ESP32 OK. Routes : /  (IHM)   /cmd?src=ihm&rg=0&rd=0   /telemetrie   /gps   /gps-detecter   /wifiup (portail WIFI-UP)\n"
-              "Temps réel : WebSocket ws://<ip>:81/  et  UDP port 4210 (Manette)");
+              "Temps réel : WebSocket ws://<ip>:81/  et  UDP port 4210 (Manette)\n"
+              "Sessions : /sessions (liste)   /session?id=N (CSV)");
 }
 
 void handleNotFound() {
@@ -1194,6 +1315,13 @@ void setup() {
   }
 
   initialiserDiagnostic();
+  if (journal.demarrer(nbDemarrages, causeDemarrage, NOM_CARTE)) {
+    Serial.printf("[Journal] Session n°%lu enregistrée dans la flash (%u Ko libres).\n",
+                  (unsigned long)nbDemarrages, (unsigned)(journal.espaceLibre() / 1024));
+  } else {
+    Serial.println("[Journal] Pas d'espace de fichiers dans la flash : choisir le schéma de partition "
+                   "« Huge APP » dans l'Arduino IDE. Le robot fonctionne, mais n'enregistre pas les sessions.");
+  }
   Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS");
   memoireGps.begin("gps", false);
   lancerDetectionGps("démarrage", true); // ouvre l'UART du GPS sur la broche/vitesse à essayer
@@ -1206,6 +1334,10 @@ void setup() {
   server.on("/telemetrie", handleTelemetrie);
   server.on("/gps", handleGps);
   server.on("/gps-detecter", handleGpsDetecter);
+  server.on("/sessions", HTTP_GET, handleSessions);
+  server.on("/session", HTTP_GET, handleSession);
+  server.on("/session-supprimer", HTTP_POST, handleSessionSupprimer);
+  server.on("/heure", handleHeure);
   server.on("/wifiup", HTTP_GET, handleWifiUpForm);
   server.on("/wifiup-login", HTTP_POST, handleWifiUpLogin);
   server.onNotFound(handleNotFound);
@@ -1216,7 +1348,7 @@ void setup() {
   udp.begin(PORT_UDP_ROBOT);
   Serial.println("Serveurs démarrés : HTTP 80 (IHM), WebSocket 81 (temps réel), UDP 4210 (Manette). Robot prêt !");
 #if GPS_SIMULATION
-  Serial.println("[GPS] ⚠️ MODE SIMULATION ACTIF (GPS_SIMULATION = 1)");
+  Serial.println("[GPS] Attention : mode simulation actif (GPS_SIMULATION = 1)");
 #endif
 
   dernierCalculMs = millis();
@@ -1240,6 +1372,8 @@ void loop() {
   diffuserSatellitesWs();
   signalerDeconnexionsWifi();
   repondreIdentification();
+  enregistrerJournal();
+  journal.loop();
 
   if (millis() - dernierCalculMs > intervalleMesureMs) {
     float deltaTSec = (millis() - dernierCalculMs) / 1000.0;

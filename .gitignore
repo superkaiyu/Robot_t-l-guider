@@ -4,3 +4,5 @@ build/
 # Associations carte <-> rôle propres à chaque PC (tools/televerser.py)
 tools/cartes_esp32.json
 __pycache__/
+# Base de données des sessions (tools/sessions.py), propre à chaque PC
+sessions/

@@ -27,6 +27,7 @@
 |---|---|
 | `robot/robot.ino` | ESP32 **Robot** (ESP32-S3 N16R8) : point d'accès WiFi, GPS, moteurs, télémétrie, sert l'IHM |
 | `robot/gps_detection.h`, `robot/gps_filtre.h`, `robot/gps_satellites.h` | Détection automatique du GPS, filtre de position, signal de chaque satellite |
+| `robot/journal.h` | Enregistrement de chaque session dans la mémoire du robot |
 | `robot/ws_serveur.h` | Mini serveur WebSocket (aucune bibliothèque à installer) |
 | `robot/ihm_html.h` | IHM compressée embarquée dans le robot (**générée**, ne pas modifier à la main) |
 | `robot/secrets_exemple.h` | Modèle pour les réseaux WiFi externes optionnels |
@@ -34,6 +35,7 @@
 | `ihm/ihm.html` | Source de l'IHM (peut aussi être ouverte directement sur le PC) |
 | `televerser_robot.bat`, `televerser_manette.bat`, `televerser_tout.bat`, `lister_esp32.bat` | Double-clic sous Windows : téléverse sur le bon ESP32 |
 | `tools/televerser.py` | Le script appelé par les `.bat` (détecte quel port COM est quelle carte) |
+| `tools/sessions.py`, `sessions_recuperer.bat` | Récupère les sessions du robot dans une base de données SQLite sur le PC |
 | `tools/generer_ihm_h.py` | Régénère `robot/ihm_html.h` après une modification de l'IHM |
 
 ## Câblage
@@ -64,7 +66,7 @@ Une roue tourne à l'envers ? Dans `robot.ino`, passe `INVERSER_ROUE_G` ou `INVE
 
 Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON BRANCHÉE » (pas d'alarme).
 
-**Arduino IDE (Robot)** : carte **ESP32S3 Dev Module** ; *USB CDC On Boot : Disabled* (le Moniteur Série passe par le port UART) ; *Flash Size : 16MB* ; *PSRAM : OPI PSRAM*. Le même `robot.ino` fonctionne encore sur une XIAO ESP32S3 : le brochage est choisi selon la carte sélectionnée.
+**Arduino IDE (Robot)** : carte **ESP32S3 Dev Module** ; *USB CDC On Boot : Disabled* (le Moniteur Série passe par le port UART) ; *Flash Size : 16MB* ; *PSRAM : OPI PSRAM* ; *Partition Scheme : Huge APP (3MB No OTA/1MB SPIFFS)* (il faut un espace de fichiers pour enregistrer les sessions). Le même `robot.ino` fonctionne encore sur une XIAO ESP32S3 : le brochage est choisi selon la carte sélectionnée.
 
 **Détection automatique du GPS** : au démarrage, le Robot cherche tout seul sur quelle broche arrive le fil TX du GPS (**GPIO14**, puis les broches libres voisines GPIO13, 12, 11, 10, 4, 5, 6, 7) et à quelle vitesse il parle (9600, 115200, 38400, 57600, 19200, 4800 bauds). Il vérifie que ce sont de vraies trames GPS (NMEA avec somme de contrôle), puis retient la combinaison trouvée pour le démarrage suivant. Si le GPS est débranché puis rebranché, il le retrouve (nouvel essai toutes les 10 s). Le résultat s'affiche :
 
@@ -132,7 +134,7 @@ Ce qu'on doit voir :
 - **Joystick virtuel** à glisser (souris ou doigt), **clavier** (flèches ou ZQSD, *Espace* = arrêt d'urgence), ou **manette USB** branchée au PC.
 - **Barres Roue G / Roue D** : la puissance réellement appliquée par le robot (pas seulement celle demandée).
 - **Qui pilote** : IHM, ESP32 Manette ou arrêt d'urgence, en direct.
-- Onglets **Vue d'ensemble**, **GPS** (position, signal de chaque satellite et carte du ciel, trajet, liens OpenStreetMap / Google Maps), **Batterie**, **Roues**, **Système** (diagnostic des coupures et des redémarrages).
+- Onglets **Vue d'ensemble**, **GPS** (position, signal de chaque satellite et carte du ciel, trajet, liens OpenStreetMap / Google Maps), **Batterie**, **Roues**, **Système** (diagnostic des coupures et des redémarrages), **Sessions** (récapitulatif de chaque session, voir plus bas).
 - Une petite coupure WiFi ne remet plus tout à zéro : l'IHM affiche « Signal faible » et grise les valeurs. La liaison n'est déclarée perdue qu'après 6 s.
 - Si le robot redémarre, un bandeau l'indique avec la cause (par exemple « chute de tension »).
 - Aucune bibliothèque externe : tout fonctionne sans Internet (seule la carte OpenStreetMap optionnelle en a besoin). Utilisable aussi sur téléphone.
@@ -155,9 +157,35 @@ Une source au repos ne bloque jamais les autres. Sans commande fraîche depuis 5
 |---|---|
 | Manette → Robot (UDP 4210) | `M,<rg>,<rd>,<jx>,<jy>,<bouton 0/1>,<rssi>` (rg/rd de -100 à 100) |
 | Robot → Manette | `OK;pilote=...;gps=...;fix=0/1;lat=...;lon=...;sat=...` |
-| IHM → Robot (WebSocket 81) | `c,<rg>,<rd>` commande · `stop` arrêt d'urgence · `p,<n>` ping |
+| IHM → Robot (WebSocket 81) | `c,<rg>,<rd>` commande · `stop` arrêt d'urgence · `p,<n>` ping · `h,<s depuis 1970>` heure du PC |
 | Robot → IHM | JSON de télémétrie 20×/s · `P,<n>` réponse au ping |
-| HTTP (secours / outils) | `/` IHM · `/cmd?src=ihm&rg=..&rd=..[&stop=1]` · `/telemetrie` · `/gps` · `/gps-detecter` · `/wifiup` · `/aide` |
+| HTTP (secours / outils) | `/` IHM · `/cmd?src=ihm&rg=..&rd=..[&stop=1]` · `/telemetrie` · `/gps` · `/gps-detecter` · `/wifiup` · `/aide` · `/sessions` · `/session?id=N` · `/session-supprimer?id=N` (POST) · `/heure?e=..` |
+
+## Sessions et base de données
+
+Une **session**, c'est tout ce qui se passe entre l'allumage et l'extinction du robot. Le robot l'enregistre lui-même dans sa mémoire flash (`/sessions/000042.csv`, 42 = numéro de démarrage), même si aucune IHM n'est ouverte :
+
+- une mesure par seconde quand le robot roule ou que le GPS se déplace, toutes les 5 s sinon : position GPS, satellites, HDOP, vitesse, tension et courant batterie, consommation, puissance des roues, qui pilote, présence de l'IHM et de la manette, signal WiFi le plus faible ;
+- les événements : arrêt d'urgence, changement de pilote, manette / IHM connectée ou perdue, appareil qui quitte le WiFi, position GPS trouvée ou perdue, alerte batterie ;
+- l'heure réelle, donnée par l'IHM à la connexion (le robot n'a pas d'horloge) ou lue sur le GPS.
+
+L'écriture se fait toutes les 10 s : on perd au plus les 10 dernières secondes quand on coupe l'alimentation. La mémoire garde environ 60 sessions ; quand elle est pleine, les plus anciennes sont effacées.
+
+**Dans l'IHM**, onglet **Sessions** : la liste, et pour chaque session un récapitulatif (durée, temps de conduite manette / IHM, distance et vitesse max GPS, batterie début → fin, consommation, % du temps avec une position GPS, arrêts d'urgence et coupures), le trajet, la courbe de batterie et la liste des événements. Le bouton *Télécharger le CSV* enregistre le fichier sur le PC, et *Ouvrir un fichier CSV* réaffiche plus tard une session déjà téléchargée. Pendant le téléchargement d'une session (1 à 2 s) le robot s'arrête par sécurité.
+
+**Base de données sur le PC** : PC connecté au WiFi du robot, double-clic sur **`sessions_recuperer.bat`**. Toutes les nouvelles sessions sont copiées dans `sessions/sessions.db` (SQLite) et leurs CSV dans `sessions/csv/`. Le dossier `sessions/` reste sur le PC (il n'est pas envoyé sur GitHub). En ligne de commande :
+
+```
+python tools/sessions.py                 # récupère les nouvelles sessions du robot
+python tools/sessions.py liste           # toutes les sessions de la base
+python tools/sessions.py recap 42        # récapitulatif détaillé de la session 42
+python tools/sessions.py importer f.csv  # ajoute un CSV téléchargé depuis l'IHM
+python tools/sessions.py exporter 42     # mesures de la session 42 en CSV (pour Excel)
+```
+
+La base contient trois tables : `sessions` (une ligne de récapitulatif par session), `mesures` et `evenements`. Elle s'ouvre aussi avec *DB Browser for SQLite* pour faire ses propres requêtes. L'IHM et `sessions.py` utilisent les mêmes règles de calcul : une distance n'est comptée qu'au-delà de 2 m entre deux positions (bruit du GPS), et un trou de plus de 10 s dans l'enregistrement est ignoré.
+
+Si l'onglet Sessions indique que le robot n'a pas d'espace pour enregistrer, c'est le *Partition Scheme* : choisir **Huge APP (3MB No OTA/1MB SPIFFS)** puis téléverser à nouveau (`televerser_robot.bat` le fait tout seul).
 
 ## Modifier l'IHM
 

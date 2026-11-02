@@ -49,7 +49,8 @@ FICHIER_CONFIG = DOSSIER_OUTILS / "cartes_esp32.json"
 #    le Moniteur Série et le téléversement passent par le port USB-C marqué "UART".
 #  - Manette : Seeed XIAO ESP32S3, Moniteur Série sur l'USB natif (CDCOnBoot=cdc).
 FQBN_PAR_ROLE = {
-    "robot": "esp32:esp32:esp32s3:FlashSize=16M,CDCOnBoot=default",
+    # PartitionScheme=huge_app : 3 Mo pour le programme + 1 Mo d'espace de fichiers (journal des sessions)
+    "robot": "esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=huge_app,CDCOnBoot=default",
     "manette": "esp32:esp32:XIAO_ESP32S3:CDCOnBoot=cdc",
 }
 VID_CONNUS = {0x303A: "ESP32 USB natif", 0x10C4: "CP210x", 0x1A86: "CH340"}

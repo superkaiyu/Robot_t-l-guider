@@ -40,7 +40,7 @@
   Utilisé par tools/televerser.py pour trouver le bon port COM quand les deux
   ESP32 sont branchés en même temps.
 
-  ⚠️ Ne pas toucher le joystick pendant la première seconde après le démarrage :
+  Attention : ne pas toucher le joystick pendant la première seconde après le démarrage :
   sa position de repos est mesurée à ce moment-là (calibration automatique).
 */
 

@@ -3,218 +3,204 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#0d1020">
-    <title>Robot téléguidé — IHM</title>
-    <!-- Aucune bibliothèque externe : la page fonctionne SANS Internet, quand le PC est
-         connecté au WiFi ROBOT_ESP32 (elle est d'ailleurs servie par le robot : http://192.168.4.1). -->
+    <title>Robot téléguidé</title>
+    <!-- Page autonome : aucune bibliothèque ni police externe, elle marche sans Internet
+         (le PC connecté au WiFi ROBOT_ESP32 n'a pas Internet). Servie par le robot sur http://192.168.4.1 -->
     <style>
         :root {
-            --fond: #0d1020; --surface: #151a2e; --surface-2: #1b2140; --surface-3: #232a4d;
-            --bord: #2a3158; --texte: #e7e9f5; --attenue: #8c93b8; --discret: #5d6490;
-            --vert: #34d399; --bleu: #60a5fa; --orange: #fbbf24; --rouge: #f87171; --violet: #c084fc;
-            --cyan: #22d3ee; --rose: #f472b6; --lime: #a3e635;
-            --rayon: 16px; --ombre: 0 10px 30px rgba(0,0,0,0.35);
+            --fond: #f2f1ec; --surface: #fffefa; --surface-2: #f7f6f1; --surface-3: #ecebe5;
+            --bord: #d6d3c9; --bord-fort: #aaa69a; --texte: #24231f; --attenue: #67645b; --discret: #9c988c;
+            --accent: #24579e; --vert: #2e7a32; --orange: #a85d0a; --rouge: #b8322a; --violet: #6b4296;
+            --bleu: #24579e; --cyan: #17737e; --rose: #9c3566; --lime: #5a7d1c;
+            --trace-fond: #fbfaf5; --grille: rgba(0, 0, 0, 0.07);
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --fond: #1a1b1d; --surface: #222326; --surface-2: #28292c; --surface-3: #303135;
+                --bord: #3a3b3f; --bord-fort: #55565c; --texte: #e6e4de; --attenue: #a5a29a; --discret: #75736d;
+                --accent: #7ba6e6; --vert: #6dbb6f; --orange: #e09a4c; --rouge: #e8746a; --violet: #b49ade;
+                --bleu: #7ba6e6; --cyan: #5cbcc6; --rose: #de85ae; --lime: #a6c95e;
+                --trace-fond: #1e1f21; --grille: rgba(255, 255, 255, 0.07);
+            }
         }
         * { box-sizing: border-box; }
         html, body { margin: 0; }
-        body {
-            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: var(--texte);
-            background: radial-gradient(1200px 600px at 10% -10%, #1d2554 0%, transparent 60%),
-                        radial-gradient(900px 500px at 110% 10%, #16304a 0%, transparent 55%), var(--fond);
-            background-attachment: fixed; min-height: 100vh; font-size: 15px; line-height: 1.4;
-        }
+        body { font-family: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; color: var(--texte); background: var(--fond); font-size: 14px; line-height: 1.45; }
         button, input { font: inherit; color: inherit; }
-        .num { font-variant-numeric: tabular-nums; }
+        .num, .kpi-value, td { font-variant-numeric: tabular-nums; }
+        a { color: var(--accent); }
+        code { font-size: 0.92em; }
 
-        /* ---------- Barre du haut ---------- */
-        .barre-haut {
-            position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 14px 22px;
-            padding: 12px 22px; background: rgba(13,16,32,0.82); backdrop-filter: blur(12px); border-bottom: 1px solid var(--bord);
-        }
-        .marque { display: flex; align-items: center; gap: 12px; margin-right: auto; }
-        .marque svg { width: 38px; height: 38px; flex-shrink: 0; }
-        .marque h1 { font-size: 1.15em; margin: 0; letter-spacing: 0.2px; }
-        .marque small { color: var(--attenue); font-size: 0.8em; }
-        .pastilles { display: flex; flex-wrap: wrap; gap: 8px; }
-        .pastille { display: flex; align-items: center; gap: 9px; padding: 6px 12px 6px 10px; background: var(--surface); border: 1px solid var(--bord); border-radius: 999px; min-width: 0; }
-        .pastille b { display: block; font-size: 0.78em; font-weight: 600; }
-        .pastille small { display: block; font-size: 0.72em; color: var(--attenue); max-width: 210px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--discret); flex-shrink: 0; }
-        .status-dot.ok { background: var(--vert); box-shadow: 0 0 0 4px rgba(52,211,153,0.15); }
-        .status-dot.warn { background: var(--orange); box-shadow: 0 0 0 4px rgba(251,191,36,0.15); animation: pulse 1.2s infinite; }
-        .status-dot.error { background: var(--rouge); box-shadow: 0 0 0 4px rgba(248,113,113,0.15); }
-        @keyframes pulse { 50% { opacity: 0.45; } }
-        .latence { font-size: 0.95em !important; font-weight: 700 !important; }
-        .connexion { display: flex; gap: 8px; }
-        .connexion input { width: 150px; padding: 8px 12px; background: var(--surface); border: 1px solid var(--bord); border-radius: 10px; outline: none; }
-        .connexion input:focus { border-color: var(--bleu); }
-        .btn { border: none; border-radius: 10px; padding: 8px 16px; cursor: pointer; font-weight: 600; background: var(--surface-3); transition: filter .15s, transform .05s; }
-        .btn:hover { filter: brightness(1.15); }
-        .btn:active { transform: scale(0.97); }
-        .btn-primaire { background: linear-gradient(135deg, #10b981, #059669); color: #fff; }
-        .btn-primaire.connected { background: linear-gradient(135deg, #ef4444, #b91c1c); }
-        a.btn { text-decoration: none; display: inline-block; font-size: 0.9em; color: var(--texte); }
+        /* ---------- En-tête ---------- */
+        .barre-haut { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 28px; padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--bord); }
+        .marque h1 { font-size: 18px; margin: 0; font-weight: 600; }
+        .marque small { color: var(--attenue); }
+        .pastilles { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-right: auto; font-size: 13px; }
+        .pastille { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+        .pastille b { font-weight: 600; }
+        .pastille small { color: var(--attenue); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 230px; }
+        .pastille > div { display: flex; gap: 5px; align-items: baseline; min-width: 0; }
+        .status-dot { width: 8px; height: 8px; border-radius: 2px; background: var(--discret); flex-shrink: 0; align-self: center; }
+        .status-dot.ok { background: var(--vert); } .status-dot.warn { background: var(--orange); } .status-dot.error { background: var(--rouge); }
+        .latence { font-weight: 600 !important; }
+        .connexion { display: flex; gap: 6px; }
+        .connexion input { width: 140px; padding: 6px 9px; background: var(--surface); border: 1px solid var(--bord-fort); border-radius: 4px; }
+        .btn { border: 1px solid var(--bord-fort); border-radius: 4px; padding: 6px 12px; cursor: pointer; background: var(--surface); }
+        .btn:hover { background: var(--surface-3); }
+        .btn-primaire { background: var(--accent); border-color: var(--accent); color: #fff; }
+        .btn-primaire:hover { background: var(--accent); filter: brightness(1.1); }
+        .btn-primaire.connected { background: var(--surface); color: var(--texte); border-color: var(--bord-fort); }
+        a.btn { text-decoration: none; display: inline-block; color: var(--texte); }
 
         /* ---------- Mise en page ---------- */
-        .grille { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; padding: 20px 22px; max-width: 1500px; margin: 0 auto; }
-        .carte { background: linear-gradient(180deg, rgba(27,33,64,0.85), rgba(21,26,46,0.85)); border: 1px solid var(--bord); border-radius: var(--rayon); padding: 20px; box-shadow: var(--ombre); min-width: 0; }
-        .titre-carte { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
-        h2 { font-size: 1.05em; margin: 0; letter-spacing: 0.3px; }
-        h3 { font-size: 0.95em; margin: 0 0 10px 0; color: var(--attenue); font-weight: 600; }
-        .badge { font-size: 0.75em; font-weight: 700; padding: 4px 10px; border-radius: 999px; background: var(--surface-3); color: var(--attenue); white-space: nowrap; }
+        .grille { display: grid; grid-template-columns: minmax(290px, 350px) minmax(0, 1fr); gap: 16px; padding: 16px 20px; max-width: 1480px; margin: 0 auto; }
+        .carte { background: var(--surface); border: 1px solid var(--bord); border-radius: 6px; padding: 16px; min-width: 0; }
+        .titre-carte { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+        h2 { font-size: 15px; margin: 0; font-weight: 600; }
+        h3 { font-size: 13px; margin: 0 0 6px; font-weight: 600; color: var(--attenue); }
+        .badge, .badge-etat-bms { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 3px; border: 1px solid var(--bord-fort); color: var(--attenue); background: var(--surface-2); white-space: nowrap; vertical-align: 1px; }
+        .ok { color: var(--vert); border-color: var(--vert); }
+        .attention { color: var(--orange); border-color: var(--orange); }
+        .alerte { color: var(--rouge); border-color: var(--rouge); }
+        .info { color: var(--accent); border-color: var(--accent); }
+        .urgence { color: #fff; background: var(--rouge); border-color: var(--rouge); }
 
         /* ---------- Pilotage ---------- */
-        .pilotage { position: sticky; top: 86px; align-self: start; }
-        .zone-joystick { display: flex; align-items: center; justify-content: center; gap: 22px; }
-        .joystick {
-            --taille: 200px; width: var(--taille); height: var(--taille); border-radius: 50%; position: relative; flex-shrink: 0;
-            background: radial-gradient(circle at 50% 45%, #242c56 0%, #151a33 70%); border: 1px solid var(--bord);
-            box-shadow: inset 0 6px 20px rgba(0,0,0,0.5), 0 0 0 8px rgba(96,165,250,0.05); touch-action: none; cursor: grab; user-select: none;
-        }
-        .joystick.actif { cursor: grabbing; box-shadow: inset 0 6px 20px rgba(0,0,0,0.5), 0 0 0 8px rgba(96,165,250,0.18); }
-        .joystick::before, .joystick::after { content: ''; position: absolute; background: rgba(140,147,184,0.12); }
-        .joystick::before { left: 50%; top: 14%; bottom: 14%; width: 1px; } .joystick::after { top: 50%; left: 14%; right: 14%; height: 1px; }
-        .joystick-repere { position: absolute; font-size: 0.7em; color: var(--discret); font-weight: 700; }
-        .joystick-bouton {
-            position: absolute; left: 50%; top: 50%; width: 38%; height: 38%; border-radius: 50%; z-index: 1; pointer-events: none;
-            transform: translate(-50%, -50%);
-            background: radial-gradient(circle at 35% 30%, #93c5fd, #3b82f6 55%, #1d4ed8); box-shadow: 0 8px 18px rgba(29,78,216,0.55);
-        }
-        .barres-roues { display: flex; gap: 14px; }
-        .barre-roue { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 0.75em; color: var(--attenue); }
-        .barre-roue b { color: var(--texte); font-size: 1.1em; min-width: 3ch; text-align: center; }
-        .barre-fond { width: 18px; height: 160px; background: var(--surface); border: 1px solid var(--bord); border-radius: 10px; position: relative; overflow: hidden; }
-        .barre-fond::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--discret); }
-        .barre-val { position: absolute; left: 0; right: 0; bottom: 50%; height: 0; background: linear-gradient(0deg, #10b981, #6ee7b7); }
-        .barre-val.recul { bottom: auto; top: 50%; background: linear-gradient(180deg, #f59e0b, #fcd34d); }
-        .aide { font-size: 0.78em; color: var(--attenue); text-align: center; margin: 12px 0 4px; }
-        kbd { background: var(--surface-3); border: 1px solid var(--bord); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; font-size: 0.95em; font-family: inherit; }
-        .reglage { margin-top: 14px; }
-        .reglage label { display: flex; justify-content: space-between; font-size: 0.85em; color: var(--attenue); }
+        .pilotage { position: sticky; top: 12px; align-self: start; }
+        .zone-joystick { display: flex; align-items: center; justify-content: center; gap: 20px; }
+        .joystick { --taille: 190px; width: var(--taille); height: var(--taille); border-radius: 50%; position: relative; flex-shrink: 0;
+                    background: var(--surface-2); border: 1px solid var(--bord-fort); touch-action: none; cursor: grab; user-select: none; }
+        .joystick.actif { cursor: grabbing; border-color: var(--accent); }
+        .joystick::before, .joystick::after { content: ''; position: absolute; background: var(--bord); }
+        .joystick::before { left: 50%; top: 10%; bottom: 10%; width: 1px; } .joystick::after { top: 50%; left: 10%; right: 10%; height: 1px; }
+        .joystick-repere { position: absolute; font-size: 11px; color: var(--discret); }
+        .joystick-bouton { position: absolute; left: 50%; top: 50%; width: 34%; height: 34%; border-radius: 50%; z-index: 1; pointer-events: none;
+                           transform: translate(-50%, -50%); background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--accent); }
+        .barres-roues { display: flex; gap: 12px; }
+        .barre-roue { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 12px; color: var(--attenue); }
+        .barre-roue b { color: var(--texte); min-width: 3ch; text-align: center; }
+        .barre-fond { width: 14px; height: 150px; background: var(--surface-2); border: 1px solid var(--bord-fort); border-radius: 2px; position: relative; overflow: hidden; }
+        .barre-fond::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--bord-fort); }
+        .barre-val { position: absolute; left: 0; right: 0; bottom: 50%; height: 0; background: var(--vert); }
+        .barre-val.recul { bottom: auto; top: 50%; background: var(--orange); }
+        .aide { font-size: 12px; color: var(--attenue); text-align: center; margin: 10px 0 2px; }
+        kbd { border: 1px solid var(--bord-fort); border-radius: 3px; padding: 0 4px; font-size: 11px; font-family: inherit; background: var(--surface-2); }
+        .reglage { margin-top: 12px; }
+        .reglage label { display: flex; justify-content: space-between; font-size: 13px; color: var(--attenue); }
         .reglage label b { color: var(--texte); }
-        input[type="range"] { width: 100%; accent-color: var(--vert); }
-        .btn-arret {
-            width: 100%; margin-top: 14px; padding: 14px; border: none; border-radius: 14px; cursor: pointer; font-weight: 800; letter-spacing: 1px; color: #fff;
-            background: linear-gradient(135deg, #ef4444, #991b1b); box-shadow: 0 8px 22px rgba(239,68,68,0.35); transition: transform .05s, filter .15s;
-        }
-        .btn-arret:hover { filter: brightness(1.1); } .btn-arret:active { transform: scale(0.98); }
-        .btn-arret.flash { animation: flash .6s; }
-        @keyframes flash { 0%,100% { box-shadow: 0 8px 22px rgba(239,68,68,0.35); } 50% { box-shadow: 0 0 0 10px rgba(239,68,68,0.45); } }
-        .sous-cartes { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
-        .sous-carte { background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 12px; padding: 12px; text-align: center; }
-        .sous-carte h3 { font-size: 0.78em; margin-bottom: 4px; }
-        .sous-carte small { display: block; font-size: 0.72em; color: var(--attenue); }
-        .stick-box { width: 76px; height: 76px; border: 1px solid var(--bord); border-radius: 50%; position: relative; background: #11152a; margin: 8px auto; }
-        .stick-box::before, .stick-box::after { content: ''; position: absolute; background: rgba(140,147,184,0.15); }
-        .stick-box::before { left: 50%; top: 8px; bottom: 8px; width: 1px; } .stick-box::after { top: 50%; left: 8px; right: 8px; height: 1px; }
-        .stick-dot { width: 14px; height: 14px; border-radius: 50%; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1; transition: opacity .3s; }
-        details.technique { margin-top: 14px; font-size: 0.8em; color: var(--attenue); }
+        input[type="range"] { width: 100%; accent-color: var(--accent); }
+        .btn-arret { width: 100%; margin-top: 12px; padding: 11px; border: 1px solid var(--rouge); border-radius: 4px; cursor: pointer; font-weight: 700; color: #fff; background: var(--rouge); }
+        .btn-arret:hover { filter: brightness(1.08); }
+        .btn-arret.flash { outline: 3px solid var(--rouge); outline-offset: 2px; }
+        .sous-cartes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+        .sous-carte { border: 1px solid var(--bord); border-radius: 4px; padding: 10px; text-align: center; }
+        .sous-carte small { display: block; font-size: 12px; color: var(--attenue); }
+        .stick-box { width: 68px; height: 68px; border: 1px solid var(--bord-fort); border-radius: 50%; position: relative; background: var(--surface-2); margin: 6px auto; }
+        .stick-box::before, .stick-box::after { content: ''; position: absolute; background: var(--bord); }
+        .stick-box::before { left: 50%; top: 6px; bottom: 6px; width: 1px; } .stick-box::after { top: 50%; left: 6px; right: 6px; height: 1px; }
+        .stick-dot { width: 12px; height: 12px; border-radius: 50%; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 1; }
+        details.technique { margin-top: 12px; font-size: 12px; color: var(--attenue); }
         details.technique summary { cursor: pointer; }
-        .json-monitor { background: #070912; color: #6ee7b7; font-family: ui-monospace, Consolas, monospace; padding: 8px 10px; border-radius: 8px; margin: 8px 0; word-break: break-all; }
+        .json-monitor { background: var(--surface-2); border: 1px solid var(--bord); font-family: Consolas, ui-monospace, monospace; padding: 6px 8px; border-radius: 3px; margin: 6px 0; word-break: break-all; color: var(--texte); }
 
         /* ---------- Onglets ---------- */
-        .onglets { display: flex; gap: 6px; padding: 4px; background: rgba(13,16,32,0.5); border: 1px solid var(--bord); border-radius: 12px; margin-bottom: 18px; overflow-x: auto; }
-        .tab-btn { flex: 1; background: none; border: none; padding: 9px 14px; border-radius: 9px; cursor: pointer; color: var(--attenue); font-weight: 600; white-space: nowrap; }
+        .onglets { display: flex; gap: 2px; border-bottom: 1px solid var(--bord); margin: -4px 0 16px; overflow-x: auto; }
+        .tab-btn { background: none; border: none; border-bottom: 2px solid transparent; padding: 8px 12px; cursor: pointer; color: var(--attenue); white-space: nowrap; margin-bottom: -1px; }
         .tab-btn:hover { color: var(--texte); }
-        .tab-btn.active { background: var(--surface-3); color: var(--texte); box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
-        .tab-pane { display: none; } .tab-pane.active { display: block; animation: apparition .2s; }
-        @keyframes apparition { from { opacity: 0; transform: translateY(4px); } }
+        .tab-btn.active { color: var(--texte); border-bottom-color: var(--accent); font-weight: 600; }
+        .tab-pane { display: none; } .tab-pane.active { display: block; }
 
-        /* ---------- Tuiles de mesure ---------- */
-        .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
-        .tuile { background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 14px; padding: 14px 16px; position: relative; overflow: hidden; }
-        .tuile::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--accent, var(--vert)); }
-        .tuile .libelle { font-size: 0.78em; color: var(--attenue); }
-        .tuile .kpi-value { font-size: 1.7em; font-weight: 700; margin: 4px 0 0; color: var(--accent, var(--vert)); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
-        .tuile .kpi-value.moyen { font-size: 1.3em; }
-        .tuile .unite { font-size: 0.75em; color: var(--attenue); }
+        /* ---------- Mesures ---------- */
+        .tuiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0; margin-bottom: 14px; border: 1px solid var(--bord); border-radius: 4px; overflow: hidden; }
+        .tuile { padding: 10px 12px; border-right: 1px solid var(--bord); border-bottom: 1px solid var(--bord); margin: 0 -1px -1px 0; }
+        .tuile .libelle { font-size: 12px; color: var(--attenue); }
+        .tuile .kpi-value { font-size: 22px; font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+        .tuile .kpi-value.moyen { font-size: 18px; }
+        .tuile .unite { font-size: 12px; color: var(--attenue); }
         .kpi-value.perime { color: var(--discret) !important; }
-        .jauge { height: 5px; background: var(--surface-3); border-radius: 5px; margin-top: 8px; overflow: hidden; }
-        .jauge div { height: 100%; width: 0; background: var(--accent); border-radius: 5px; transition: width .3s, background .3s; }
+        .jauge { height: 4px; background: var(--surface-3); margin-top: 6px; }
+        .jauge div { height: 100%; width: 0; background: var(--vert); }
 
-        .section { margin-top: 20px; }
-        .section-titre { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
-        .section-titre h2 { display: flex; align-items: center; gap: 10px; }
-        .badge-etat-bms { font-size: 0.72em; padding: 3px 10px; border-radius: 999px; font-weight: 700; background: var(--surface-3); color: var(--attenue); }
-        .badge-etat-bms.ok { background: rgba(52,211,153,0.2); color: var(--vert); } .badge-etat-bms.alerte { background: rgba(248,113,113,0.2); color: var(--rouge); }
-        .gps-resume { cursor: pointer; border-radius: 14px; transition: background .15s; }
-        .gps-resume:hover { background: rgba(255,255,255,0.02); }
+        .section { margin-top: 18px; }
+        .section-titre { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--bord); }
+        .section-titre h2 { display: flex; align-items: center; gap: 8px; }
+        .gps-resume { cursor: pointer; }
 
-        .bms-alerte { display: none; background: rgba(248,113,113,0.1); border: 1px solid rgba(248,113,113,0.5); color: #fecaca; border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; font-size: 0.9em; }
+        .bms-alerte { display: none; border: 1px solid var(--rouge); color: var(--rouge); border-radius: 4px; padding: 8px 12px; margin-bottom: 12px; }
         .bms-alerte.visible { display: block; }
-        .batterie-haut { display: grid; grid-template-columns: 170px 1fr; gap: 16px; align-items: center; margin-bottom: 16px; }
-        .anneau { width: 170px; height: 170px; }
-        .anneau circle { fill: none; stroke-width: 12; }
+        .batterie-haut { display: grid; grid-template-columns: 150px 1fr; gap: 14px; align-items: center; margin-bottom: 14px; }
+        .anneau { width: 150px; height: 150px; }
+        .anneau circle { fill: none; stroke-width: 10; }
         .anneau .fond-anneau { stroke: var(--surface-3); }
-        .anneau .val-anneau { stroke: var(--vert); stroke-linecap: round; transform: rotate(-90deg); transform-origin: 60px 60px; transition: stroke-dashoffset .4s, stroke .4s; }
-        .anneau text { fill: var(--texte); font-weight: 800; font-size: 24px; text-anchor: middle; }
-        .anneau text.petit { font-size: 9px; fill: var(--attenue); font-weight: 600; }
+        .anneau .val-anneau { stroke: var(--vert); transform: rotate(-90deg); transform-origin: 60px 60px; }
+        .anneau text { fill: var(--texte); font-weight: 600; font-size: 22px; text-anchor: middle; }
+        .anneau text.petit { font-size: 9px; fill: var(--attenue); font-weight: 400; }
 
-        /* ---------- Graphiques ---------- */
-        .charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
-        .chart-box { background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 14px; padding: 12px 14px 8px; min-width: 0; }
-        .chart-entete { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.8em; color: var(--attenue); margin-bottom: 4px; }
-        .chart-entete i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; }
-        .chart-entete b { font-size: 1.25em; color: var(--texte); font-variant-numeric: tabular-nums; }
-        .chart-box canvas { display: block; width: 100%; height: 150px; }
-
-        /* ---------- Tracés / GPS ---------- */
-        .trace-canvas { display: block; width: 100%; background: #0b0e1c; border: 1px solid var(--bord); border-radius: 14px; }
-        .trace-scale-label { text-align: center; font-size: 0.8em; color: var(--attenue); margin-top: 6px; }
-        .gps-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 20px; font-size: 0.85em; color: var(--attenue); background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 14px; padding: 12px 16px; }
-        .gps-details b { color: var(--texte); font-weight: 600; white-space: nowrap; }
-        .note-box { font-size: 0.82em; color: var(--attenue); background: rgba(96,165,250,0.06); border: 1px solid rgba(96,165,250,0.25); border-radius: 12px; padding: 10px 14px; margin-top: 12px; line-height: 1.5; }
-        .gps-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; align-items: center; }
-        .gps-actions label { font-size: 0.85em; color: var(--attenue); }
-        .gps-carte { width: 100%; height: 320px; border: 1px solid var(--bord); border-radius: 14px; margin-top: 12px; display: none; background: #0b0e1c; }
+        /* ---------- Graphiques et tracés ---------- */
+        .charts-container { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 10px; }
+        .chart-box { border: 1px solid var(--bord); border-radius: 4px; padding: 8px 10px 6px; min-width: 0; }
+        .chart-entete { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; color: var(--attenue); margin-bottom: 2px; }
+        .chart-entete i { display: inline-block; width: 10px; height: 2px; margin-right: 6px; vertical-align: middle; }
+        .chart-entete b { font-size: 14px; color: var(--texte); font-variant-numeric: tabular-nums; }
+        .chart-box canvas { display: block; width: 100%; height: 140px; }
+        .trace-canvas { display: block; width: 100%; background: var(--trace-fond); border: 1px solid var(--bord); border-radius: 4px; }
+        .trace-scale-label { text-align: center; font-size: 12px; color: var(--attenue); margin-top: 4px; }
+        .gps-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 4px 18px; font-size: 13px; color: var(--attenue); padding: 10px 12px; border: 1px solid var(--bord); border-radius: 4px; }
+        .gps-details b { color: var(--texte); font-weight: 600; }
+        .note-box { font-size: 13px; color: var(--attenue); border-left: 3px solid var(--bord-fort); padding: 2px 0 2px 10px; margin-top: 10px; }
+        .gps-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+        .gps-actions label { font-size: 13px; color: var(--attenue); }
+        .gps-carte { width: 100%; height: 320px; border: 1px solid var(--bord); border-radius: 4px; margin-top: 10px; display: none; }
         .gps-carte.visible { display: block; }
+        .deux-colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .reception { display: grid; grid-template-columns: 250px 1fr; gap: 14px; align-items: start; }
+        .ciel { width: 100%; max-width: 250px; aspect-ratio: 1; }
+        .barres-sats { display: flex; align-items: flex-end; gap: 3px; height: 150px; padding: 6px 6px 0; border: 1px solid var(--bord); border-radius: 4px; overflow-x: auto; }
+        .barre-sat { flex: 1 0 22px; max-width: 32px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: 10px; color: var(--attenue); }
+        .barre-sat .remplissage { width: 100%; min-height: 2px; }
+        .barre-sat b { font-size: 11px; color: var(--texte); font-weight: 600; }
+        .legende-sats { font-size: 12px; color: var(--attenue); margin-top: 4px; }
+        .legende-sats i { display: inline-block; width: 9px; height: 9px; margin: 0 4px 0 10px; vertical-align: -1px; }
 
-        /* ---------- Réception des satellites ---------- */
-        .reception { display: grid; grid-template-columns: 280px 1fr; gap: 16px; align-items: start; }
-        .ciel { width: 100%; max-width: 280px; aspect-ratio: 1; background: #0b0e1c; border: 1px solid var(--bord); border-radius: 50%; }
-        .barres-sats { display: flex; align-items: flex-end; gap: 4px; height: 170px; padding: 8px 8px 0; background: rgba(13,16,32,0.45); border: 1px solid var(--bord); border-radius: 14px; overflow-x: auto; }
-        .barre-sat { flex: 1 0 22px; max-width: 34px; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; font-size: 0.62em; color: var(--attenue); }
-        .barre-sat .remplissage { width: 100%; border-radius: 4px 4px 0 0; min-height: 3px; }
-        .barre-sat b { font-size: 1.15em; color: var(--texte); }
-        .legende-sats { font-size: 0.75em; color: var(--attenue); margin-top: 6px; }
-        .legende-sats i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 10px; vertical-align: -1px; }
-
-        /* ---------- Système / liaison ---------- */
-        .bandeau { display: none; align-items: center; gap: 12px; max-width: 1456px; width: calc(100% - 44px); margin: 14px auto 0; padding: 10px 16px; border-radius: 12px; box-sizing: border-box;
-                   background: rgba(251,191,36,0.12); border: 1px solid rgba(251,191,36,0.5); color: #fde68a; font-size: 0.9em; }
+        /* ---------- Système, sessions ---------- */
+        .bandeau { display: none; align-items: center; gap: 12px; max-width: 1440px; width: calc(100% - 40px); margin: 12px auto 0; padding: 8px 12px; border: 1px solid var(--orange); border-radius: 4px; background: var(--surface); color: var(--orange); }
         .bandeau.visible { display: flex; }
         .bandeau span { flex: 1; }
-        .bandeau button { background: none; border: none; color: inherit; font-size: 1.3em; cursor: pointer; }
-        body.instable .tuile .kpi-value, body.instable .stick-dot { opacity: 0.45; transition: opacity .3s; }
-        .conseils { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 8px; }
-        .conseils li { padding: 10px 14px; border-radius: 12px; font-size: 0.88em; line-height: 1.45; border: 1px solid var(--bord); background: rgba(13,16,32,0.45); }
-        .conseils li.alerte { border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.08); }
-        .conseils li.attention { border-color: rgba(251,191,36,0.5); background: rgba(251,191,36,0.08); }
-        .conseils li.ok { border-color: rgba(52,211,153,0.45); background: rgba(52,211,153,0.07); }
-        .deux-colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .bandeau button { background: none; border: none; color: inherit; font-size: 18px; cursor: pointer; line-height: 1; }
+        body.instable .tuile .kpi-value, body.instable .stick-dot { opacity: 0.45; }
+        .conseils { list-style: none; padding: 0; margin: 0 0 14px; }
+        .conseils li { padding: 6px 0 6px 10px; border-left: 3px solid var(--bord-fort); margin-bottom: 6px; font-size: 13px; }
+        .conseils li.alerte { border-left-color: var(--rouge); color: var(--texte); }
+        .conseils li.attention { border-left-color: var(--orange); color: var(--texte); }
+        .conseils li.ok { border-left-color: var(--vert); color: var(--texte); }
+        table.tableau { width: 100%; border-collapse: collapse; font-size: 13px; }
+        .tableau th { text-align: left; font-weight: 600; color: var(--attenue); border-bottom: 1px solid var(--bord-fort); padding: 6px 8px; }
+        .tableau td { border-bottom: 1px solid var(--bord); padding: 6px 8px; vertical-align: top; }
+        .tableau tr.choisie td { background: var(--surface-2); }
+        .tableau .actions { text-align: right; white-space: nowrap; }
+        .tableau .actions .btn { padding: 2px 8px; font-size: 12px; }
+        .petit-texte { font-size: 13px; color: var(--attenue); margin: 0 0 10px; }
 
-        .pied { text-align: center; font-size: 0.78em; color: var(--attenue); padding: 0 22px 22px; }
+        .pied { text-align: center; font-size: 12px; color: var(--attenue); padding: 0 20px 18px; }
 
-        /* ---------- Adaptation écrans ---------- */
-        @media (max-width: 980px) {
+        @media (max-width: 960px) {
             .grille { grid-template-columns: 1fr; }
             .pilotage { position: static; }
         }
         @media (max-width: 600px) {
-            .barre-haut { position: static; padding: 10px 12px; gap: 10px; } /* sur téléphone, l'en-tête défile avec la page */
-            .marque { width: 100%; }
+            .barre-haut { padding: 10px 12px; }
             .connexion { width: 100%; } .connexion input { flex: 1; width: auto; }
-            .pastille small { max-width: 130px; }
-            .grille { padding: 12px; gap: 12px; }
-            .bandeau { width: calc(100% - 24px); }
-            .carte { padding: 14px; }
-            .joystick { --taille: 170px; }
-            .barre-fond { height: 130px; }
+            .pastille small { max-width: 150px; }
+            .grille { padding: 10px; gap: 10px; }
+            .bandeau { width: calc(100% - 20px); }
+            .carte { padding: 12px; }
+            .joystick { --taille: 165px; }
+            .barre-fond { height: 120px; }
             .tuiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-            .tuile .kpi-value { font-size: 1.35em; }
+            .tuile .kpi-value { font-size: 18px; }
             .batterie-haut, .deux-colonnes, .reception { grid-template-columns: 1fr; }
-            .ciel { margin: 0 auto; display: block; }
-            .anneau { margin: 0 auto; }
+            .anneau, .ciel { margin: 0 auto; display: block; }
+            .tableau .masquable { display: none; }
         }
     </style>
 </head>
@@ -222,21 +208,15 @@
 
     <header class="barre-haut">
         <div class="marque">
-            <svg viewBox="0 0 48 48" aria-hidden="true">
-                <defs><linearGradient id="g-logo" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#60a5fa"/></linearGradient></defs>
-                <rect x="6" y="12" width="36" height="24" rx="8" fill="url(#g-logo)"/>
-                <circle cx="17" cy="24" r="4" fill="#0d1020"/><circle cx="31" cy="24" r="4" fill="#0d1020"/>
-                <rect x="22" y="4" width="4" height="8" rx="2" fill="#60a5fa"/>
-                <rect x="9" y="36" width="8" height="7" rx="2.5" fill="#8c93b8"/><rect x="31" y="36" width="8" height="7" rx="2.5" fill="#8c93b8"/>
-            </svg>
-            <div><h1>Robot téléguidé</h1><small id="label-carte">ESP32-S3 · roues · GPS · WiFi</small></div>
+            <h1>Robot téléguidé</h1>
+            <small id="label-carte">ESP32-S3 · roues · GPS · WiFi</small>
         </div>
         <div class="pastilles">
-            <div class="pastille"><span class="status-dot" id="dot-esp32"></span><div><b>Robot</b><small id="label-esp32-status">Déconnecté</small></div></div>
-            <div class="pastille"><span class="status-dot" id="dot-manette-esp32"></span><div><b>ESP32 Manette</b><small id="label-manette-esp32">Inconnue</small></div></div>
-            <div class="pastille"><span class="status-dot" id="dot-gps"></span><div><b>GPS</b><small id="label-gps-liaison">Inconnu</small></div></div>
-            <div class="pastille"><span class="status-dot" id="dot-gamepad"></span><div><b>Manette USB</b><small id="label-gamepad-status">Non détectée</small></div></div>
-            <div class="pastille" title="Aller-retour PC ↔ robot"><div><b class="latence num" id="val-latence">— ms</b><small id="label-transport">latence</small></div></div>
+            <div class="pastille"><span class="status-dot" id="dot-esp32"></span><div><b>Robot</b><small id="label-esp32-status">déconnecté</small></div></div>
+            <div class="pastille"><span class="status-dot" id="dot-manette-esp32"></span><div><b>Manette</b><small id="label-manette-esp32">?</small></div></div>
+            <div class="pastille"><span class="status-dot" id="dot-gps"></span><div><b>GPS</b><small id="label-gps-liaison">?</small></div></div>
+            <div class="pastille"><span class="status-dot" id="dot-gamepad"></span><div><b>Manette USB</b><small id="label-gamepad-status">non branchée</small></div></div>
+            <div class="pastille" title="Temps d'aller-retour PC → robot → PC"><div><b class="latence num" id="val-latence">— ms</b><small id="label-transport"></small></div></div>
         </div>
         <div class="connexion">
             <input type="text" id="ip-esp32" placeholder="192.168.4.1" aria-label="Adresse IP du robot">
@@ -249,49 +229,49 @@
     <main class="grille">
         <!-- ===================== PILOTAGE ===================== -->
         <section class="carte pilotage">
-            <div class="titre-carte"><h2>Pilotage</h2><span class="badge" id="pilote-label">Robot non connecté</span></div>
+            <div class="titre-carte"><h2>Pilotage</h2><span class="badge" id="pilote-label">robot non connecté</span></div>
 
             <div class="zone-joystick">
-                <div class="joystick" id="joystick" role="application" aria-label="Joystick virtuel : glisser pour piloter">
-                    <span class="joystick-repere" style="top:6px;left:50%;transform:translateX(-50%)">AV</span>
-                    <span class="joystick-repere" style="bottom:6px;left:50%;transform:translateX(-50%)">AR</span>
+                <div class="joystick" id="joystick" role="application" aria-label="Joystick : glisser pour piloter">
+                    <span class="joystick-repere" style="top:4px;left:50%;transform:translateX(-50%)">avant</span>
+                    <span class="joystick-repere" style="bottom:4px;left:50%;transform:translateX(-50%)">arrière</span>
                     <div class="joystick-bouton" id="joystick-bouton"></div>
                 </div>
-                <div class="barres-roues" title="Puissance réellement appliquée aux moteurs">
-                    <div class="barre-roue"><b class="num" id="val-pwr-g">0</b><div class="barre-fond"><div class="barre-val" id="barre-g"></div></div>Roue G</div>
-                    <div class="barre-roue"><b class="num" id="val-pwr-d">0</b><div class="barre-fond"><div class="barre-val" id="barre-d"></div></div>Roue D</div>
+                <div class="barres-roues" title="Puissance envoyée aux moteurs par le robot">
+                    <div class="barre-roue"><b class="num" id="val-pwr-g">0</b><div class="barre-fond"><div class="barre-val" id="barre-g"></div></div>gauche</div>
+                    <div class="barre-roue"><b class="num" id="val-pwr-d">0</b><div class="barre-fond"><div class="barre-val" id="barre-d"></div></div>droite</div>
                 </div>
             </div>
-            <p class="aide">Glisser le joystick · <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd> · <kbd>Espace</kbd> = arrêt</p>
+            <p class="aide">Souris ou doigt sur le cercle, ou clavier : <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> / <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Espace</kbd> pour arrêter</p>
 
             <div class="reglage">
                 <label for="slider-speed">Puissance max <b><span id="label-speed">50</span> %</b></label>
                 <input type="range" id="slider-speed" min="0" max="100" value="50">
             </div>
-            <button class="btn-arret" id="cmd-stop-global">ARRÊT D'URGENCE</button>
+            <button class="btn-arret" id="cmd-stop-global">Arrêt d'urgence</button>
 
             <div class="sous-cartes">
                 <div class="sous-carte">
-                    <h3>Joystick ESP32 Manette</h3>
+                    <h3>Joystick de la manette</h3>
                     <div class="stick-box"><div class="stick-dot" id="stick-dot-physique" style="background:var(--violet);opacity:.3"></div></div>
-                    <small id="label-joystick-source">Non connectée</small>
-                    <small>Bouton : <b id="label-joystick-bouton" style="color:var(--vert)">Relâché</b></small>
+                    <small id="label-joystick-source">pas connectée</small>
+                    <small>bouton : <b id="label-joystick-bouton" style="color:var(--vert)">relâché</b></small>
                     <small class="num" id="label-joystick-valeurs">X 0.00 · Y 0.00</small>
                 </div>
                 <div class="sous-carte">
-                    <h3>Manette USB (PC)</h3>
+                    <h3>Manette USB du PC</h3>
                     <div class="stick-box"><div class="stick-dot" id="stick-dot-roues" style="background:var(--bleu);opacity:.3"></div></div>
-                    <small>Stick gauche : piloter</small>
-                    <small>Croix : puissance fixe</small>
-                    <small>B / Rond : arrêt</small>
+                    <small>stick gauche : piloter</small>
+                    <small>croix : puissance fixe</small>
+                    <small>B / rond : arrêt</small>
                 </div>
             </div>
 
             <details class="technique">
-                <summary>Détails techniques</summary>
+                <summary>Détails</summary>
                 <div class="json-monitor" id="json-out">c,0,0</div>
-                <div>Mode : <b id="mode-label" style="color:var(--orange)">Démo (simulation locale)</b></div>
-                <p>Priorité des commandes : arrêt d'urgence &gt; ESP32 Manette &gt; cette IHM. Une source au repos ne bloque jamais les autres ; sans commande fraîche depuis 500 ms, le robot s'arrête.</p>
+                <div>Mode : <b id="mode-label" style="color:var(--orange)">démo (robot simulé)</b></div>
+                <p>Priorité : arrêt d'urgence, puis manette, puis cette page. Sans ordre depuis 500 ms, le robot s'arrête.</p>
             </details>
         </section>
 
@@ -303,24 +283,25 @@
                 <button class="tab-btn" data-tab="tab-bms">Batterie</button>
                 <button class="tab-btn" data-tab="tab-roues">Roues</button>
                 <button class="tab-btn" data-tab="tab-systeme">Système</button>
+                <button class="tab-btn" data-tab="tab-sessions">Sessions</button>
             </nav>
 
             <!-- ---------- Vue d'ensemble ---------- -->
             <div id="tab-global" class="tab-pane active">
                 <div class="tuiles">
-                    <div class="tuile" style="--accent:var(--vert)"><div class="libelle">Vitesse moyenne</div><div class="kpi-value" id="val-vitesse-globale">0.00</div><div class="unite">m/s</div></div>
-                    <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Distance totale</div><div class="kpi-value" id="val-distance">0.00</div><div class="unite">mètres</div></div>
-                    <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Batterie (pack)</div><div class="kpi-value" id="val-batterie">12.00</div><div class="unite">volts</div></div>
-                    <div class="tuile" style="--accent:var(--cyan)"><div class="libelle">État de charge</div><div class="kpi-value" id="val-soc">100</div><div class="unite">%</div><div class="jauge"><div id="jauge-soc"></div></div></div>
-                    <div class="tuile" style="--accent:var(--rose)"><div class="libelle">Consommation</div><div class="kpi-value" id="val-consommation">0.000</div><div class="unite">Ah cumulés</div></div>
+                    <div class="tuile"><div class="libelle">Vitesse moyenne</div><div class="kpi-value" id="val-vitesse-globale">0.00</div><div class="unite">m/s</div></div>
+                    <div class="tuile"><div class="libelle">Distance</div><div class="kpi-value" id="val-distance">0.00</div><div class="unite">m</div></div>
+                    <div class="tuile"><div class="libelle">Batterie</div><div class="kpi-value" id="val-batterie">12.00</div><div class="unite">V</div></div>
+                    <div class="tuile"><div class="libelle">Charge</div><div class="kpi-value" id="val-soc">100</div><div class="unite">%</div><div class="jauge"><div id="jauge-soc"></div></div></div>
+                    <div class="tuile"><div class="libelle">Consommation</div><div class="kpi-value" id="val-consommation">0.000</div><div class="unite">Ah</div></div>
                 </div>
 
-                <div class="section gps-resume" id="gps-resume" title="Voir l'onglet GPS">
-                    <div class="section-titre"><h2>Position GPS <span class="badge-etat-bms" data-gps="badge">Robot non connecté</span></h2><small style="color:var(--attenue)">Détails ›</small></div>
+                <div class="section gps-resume" id="gps-resume" title="Ouvrir l'onglet GPS">
+                    <div class="section-titre"><h2>Position GPS <span class="badge-etat-bms" data-gps="badge">robot non connecté</span></h2><small style="color:var(--attenue)">détails dans l'onglet GPS</small></div>
                     <div class="tuiles" style="margin-bottom:0">
-                        <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Latitude</div><div class="kpi-value moyen perime" data-gps="lat">--</div></div>
-                        <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Longitude</div><div class="kpi-value moyen perime" data-gps="lon">--</div></div>
-                        <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Satellites</div><div class="kpi-value moyen" data-gps="sat">0</div><div class="unite">utilisés / visibles</div></div>
+                        <div class="tuile"><div class="libelle">Latitude</div><div class="kpi-value moyen perime" data-gps="lat">--</div></div>
+                        <div class="tuile"><div class="libelle">Longitude</div><div class="kpi-value moyen perime" data-gps="lon">--</div></div>
+                        <div class="tuile"><div class="libelle">Satellites</div><div class="kpi-value moyen" data-gps="sat">0</div><div class="unite">utilisés / vus</div></div>
                     </div>
                 </div>
 
@@ -330,84 +311,92 @@
                 </div>
 
                 <div class="section">
-                    <div class="section-titre"><h2>Tracé du robot (odométrie)</h2><button class="btn" id="btn-reset-trace">Réinitialiser</button></div>
+                    <div class="section-titre"><h2>Tracé estimé (odométrie)</h2><button class="btn" id="btn-reset-trace">Effacer</button></div>
                     <canvas id="traceCanvas" class="trace-canvas" width="900" height="420"></canvas>
                     <div class="trace-scale-label num" id="trace-scale-label">Position : (0.00, 0.00) m — cap 0°</div>
                 </div>
 
                 <div class="reglage">
-                    <label for="slider-slope">Charge mécanique simulée (mode démo) <b><span id="label-slope">0</span> %</b></label>
+                    <label for="slider-slope">Charge mécanique (mode démo seulement) <b><span id="label-slope">0</span> %</b></label>
                     <input type="range" id="slider-slope" min="0" max="100" value="0">
                 </div>
             </div>
 
             <!-- ---------- GPS ---------- -->
             <div id="tab-gps" class="tab-pane">
-                <div class="section-titre"><h2>Position GPS du robot <span class="badge-etat-bms" data-gps="badge">Robot non connecté</span></h2></div>
+                <div class="section-titre"><h2>Position GPS <span class="badge-etat-bms" data-gps="badge">robot non connecté</span></h2></div>
                 <div class="tuiles">
-                    <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Latitude</div><div class="kpi-value moyen perime" data-gps="lat">--</div></div>
-                    <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Longitude</div><div class="kpi-value moyen perime" data-gps="lon">--</div></div>
-                    <div class="tuile" style="--accent:var(--lime)"><div class="libelle">Satellites</div><div class="kpi-value moyen" data-gps="sat">0</div><div class="unite">utilisés / visibles</div></div>
-                    <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Vitesse GPS</div><div class="kpi-value moyen" id="val-gps-vitesse">--</div><div class="unite">km/h</div></div>
-                    <div class="tuile" style="--accent:var(--violet)"><div class="libelle">Altitude</div><div class="kpi-value moyen" id="val-gps-altitude">--</div><div class="unite">m</div></div>
+                    <div class="tuile"><div class="libelle">Latitude</div><div class="kpi-value moyen perime" data-gps="lat">--</div></div>
+                    <div class="tuile"><div class="libelle">Longitude</div><div class="kpi-value moyen perime" data-gps="lon">--</div></div>
+                    <div class="tuile"><div class="libelle">Satellites</div><div class="kpi-value moyen" data-gps="sat">0</div><div class="unite">utilisés / vus</div></div>
+                    <div class="tuile"><div class="libelle">Vitesse</div><div class="kpi-value moyen" id="val-gps-vitesse">--</div><div class="unite">km/h</div></div>
+                    <div class="tuile"><div class="libelle">Altitude</div><div class="kpi-value moyen" id="val-gps-altitude">--</div><div class="unite">m</div></div>
                 </div>
                 <div class="gps-details">
                     <div>Module : <b id="val-gps-module">—</b></div>
                     <div>Branché sur : <b id="val-gps-broche">—</b></div>
-                    <div title="Plus la valeur est basse, plus la position est précise (&lt; 2 = bon)">Précision (HDOP) : <b id="val-gps-hdop">—</b></div>
+                    <div title="Plus c'est bas, plus c'est précis (moins de 2 : bien)">HDOP : <b id="val-gps-hdop">—</b></div>
                     <div>Cap : <b id="val-gps-cap">—</b></div>
                     <div>Mouvement : <b id="val-gps-mouvement">—</b></div>
-                    <div title="Écart typique d'une mesure seule (HDOP × 2,5 m)">Précision d'une mesure : <b id="val-gps-precision">—</b></div>
-                    <div>Heure UTC : <b id="val-gps-heure">—</b></div>
+                    <div title="Écart typique d'une seule mesure (HDOP × 2,5 m)">Précision d'une mesure : <b id="val-gps-precision">—</b></div>
+                    <div>Heure (UTC) : <b id="val-gps-heure">—</b></div>
                     <div>Caractères reçus : <b class="num" id="val-gps-caracteres">0</b></div>
-                    <div>Trames valides / erronées : <b class="num" id="val-gps-trames">0 / 0</b></div>
+                    <div>Trames bonnes / erronées : <b class="num" id="val-gps-trames">0 / 0</b></div>
                 </div>
-                <div class="note-box" id="note-gps">Connectez-vous au robot pour recevoir la position GPS.</div>
+                <div class="note-box" id="note-gps">Pas de données tant que le robot n'est pas connecté.</div>
 
                 <div class="gps-actions">
-                    <button class="btn" id="btn-gps-detecter" title="Le robot réessaie toutes les broches libres et toutes les vitesses">Relancer la détection du GPS</button>
-                    <a class="btn" id="lien-osm" href="#" target="_blank" rel="noopener">Ouvrir dans OpenStreetMap</a>
-                    <a class="btn" id="lien-gmaps" href="#" target="_blank" rel="noopener">Ouvrir dans Google Maps</a>
-                    <label><input type="checkbox" id="chk-carte"> Afficher la carte (nécessite Internet sur ce PC)</label>
+                    <button class="btn" id="btn-gps-detecter" title="Le robot réessaie toutes les broches libres et toutes les vitesses">Relancer la détection</button>
+                    <a class="btn" id="lien-osm" href="#" target="_blank" rel="noopener">OpenStreetMap</a>
+                    <a class="btn" id="lien-gmaps" href="#" target="_blank" rel="noopener">Google Maps</a>
+                    <label><input type="checkbox" id="chk-carte"> afficher la carte (il faut Internet sur ce PC)</label>
                 </div>
                 <iframe class="gps-carte" id="gps-carte" title="Carte OpenStreetMap"></iframe>
 
                 <div class="section">
-                    <div class="section-titre"><h2>Réception des satellites <span class="badge-etat-bms" id="badge-reception">—</span></h2></div>
+                    <div class="section-titre"><h2>Réception <span class="badge-etat-bms" id="badge-reception">—</span></h2></div>
                     <div class="reception">
-                        <canvas id="cielCanvas" class="ciel" width="560" height="560" title="Position des satellites dans le ciel (centre = au-dessus, bord = horizon, N en haut)"></canvas>
+                        <canvas id="cielCanvas" class="ciel" width="500" height="500" title="Satellites dans le ciel : centre = à la verticale, bord = horizon, nord en haut"></canvas>
                         <div>
-                            <div class="barres-sats" id="barres-sats"><span style="margin:auto;font-size:0.85em">En attente des satellites...</span></div>
-                            <div class="legende-sats">Signal (dB-Hz) :<i style="background:var(--vert)"></i>≥ 35 très bon<i style="background:var(--orange)"></i>25–35 moyen<i style="background:var(--rouge)"></i>&lt; 25 trop faible<i style="background:var(--discret)"></i>pas reçu</div>
-                            <div class="note-box" id="note-reception">Il faut au moins 4 satellites au-dessus de 30 dB-Hz pour une position, 6 ou plus pour une bonne précision.</div>
-                            <div class="note-box"><b>Pour gagner en précision :</b> ciel bien dégagé (loin des murs, arbres et toits) · antenne du module tournée vers le ciel, jamais couverte par la main · module GPS à 10 cm au moins de l'ESP32 et des moteurs (leur bruit électrique brouille le GPS) · laisser le GPS allumé 10 à 15 min (la précision s'améliore) · alimentation stable (chaque redémarrage du robot oblige le GPS à tout recommencer) · robot immobile : sa position est moyennée sur 60 s.</div>
+                            <div class="barres-sats" id="barres-sats"><span style="margin:auto;font-size:12px">pas encore de satellites</span></div>
+                            <div class="legende-sats">signal en dB-Hz :<i style="background:var(--vert)"></i>35 et plus<i style="background:var(--orange)"></i>25 à 35<i style="background:var(--rouge)"></i>moins de 25<i style="background:var(--discret)"></i>pas reçu</div>
+                            <div class="note-box" id="note-reception">Il faut 4 satellites au-dessus de 30 dB-Hz pour avoir une position, 6 pour qu'elle soit précise.</div>
+                            <details class="technique"><summary>Comment améliorer la réception</summary>
+                                <ul style="margin:6px 0 0;padding-left:18px">
+                                    <li>dehors, loin des murs et des arbres ;</li>
+                                    <li>antenne vers le ciel, sans la main dessus ;</li>
+                                    <li>le GPS à 10 cm au moins de l'ESP32 et des moteurs ;</li>
+                                    <li>le laisser allumé 10 à 15 min ;</li>
+                                    <li>une alimentation qui ne coupe pas (chaque redémarrage repart de zéro).</li>
+                                </ul>
+                            </details>
                         </div>
                     </div>
                 </div>
 
                 <div class="section">
-                    <div class="section-titre"><h2>Trajet GPS</h2><button class="btn" id="btn-reset-trace-gps">Réinitialiser</button></div>
+                    <div class="section-titre"><h2>Trajet</h2><button class="btn" id="btn-reset-trace-gps">Effacer</button></div>
                     <canvas id="traceGpsCanvas" class="trace-canvas" width="900" height="420"></canvas>
-                    <div class="trace-scale-label num" id="trace-gps-label">En attente d'une position GPS...</div>
-                    <div class="trace-scale-label">Ligne = trajet filtré par le robot · points pâles = mesures brutes du GPS (elles varient toujours de quelques mètres, même immobile : c'est normal)</div>
+                    <div class="trace-scale-label num" id="trace-gps-label">pas encore de position</div>
+                    <div class="trace-scale-label">trait : trajet filtré par le robot · points : mesures brutes (elles bougent toujours de quelques mètres)</div>
                 </div>
             </div>
 
             <!-- ---------- Batterie ---------- -->
             <div id="tab-bms" class="tab-pane">
-                <div class="section-titre"><h2>Batterie (pack 3S) <span class="badge-etat-bms ok" id="badge-etat-bms">OK</span></h2></div>
-                <div class="bms-alerte" id="bms-alerte">⚠️ <strong id="bms-alerte-texte">Protection déclenchée</strong></div>
+                <div class="section-titre"><h2>Batterie (3S) <span class="badge-etat-bms ok" id="badge-etat-bms">OK</span></h2></div>
+                <div class="bms-alerte" id="bms-alerte"><strong id="bms-alerte-texte">Protection déclenchée</strong></div>
                 <div class="batterie-haut">
-                    <svg class="anneau" viewBox="0 0 120 120" aria-label="État de charge">
+                    <svg class="anneau" viewBox="0 0 120 120" aria-label="Charge">
                         <circle class="fond-anneau" cx="60" cy="60" r="50"/>
                         <circle class="val-anneau" id="anneau-soc" cx="60" cy="60" r="50" stroke-dasharray="314.16" stroke-dashoffset="0"/>
                         <text x="60" y="64" id="anneau-soc-texte">100 %</text>
                         <text class="petit" x="60" y="80">charge</text>
                     </svg>
                     <div class="tuiles" style="margin-bottom:0">
-                        <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Tension pack</div><div class="kpi-value" id="val-batterie-2">12.00</div><div class="unite">volts</div></div>
-                        <div class="tuile" style="--accent:var(--orange)"><div class="libelle">Courant</div><div class="kpi-value" id="val-courant">0.20</div><div class="unite">ampères</div></div>
-                        <div class="tuile" style="--accent:var(--cyan)"><div class="libelle">SoC</div><div class="kpi-value" id="val-soc-2">100</div><div class="unite">%</div></div>
+                        <div class="tuile"><div class="libelle">Tension</div><div class="kpi-value" id="val-batterie-2">12.00</div><div class="unite">V</div></div>
+                        <div class="tuile"><div class="libelle">Courant</div><div class="kpi-value" id="val-courant">0.20</div><div class="unite">A</div></div>
+                        <div class="tuile"><div class="libelle">Charge</div><div class="kpi-value" id="val-soc-2">100</div><div class="unite">%</div></div>
                     </div>
                 </div>
                 <div class="charts-container">
@@ -415,31 +404,61 @@
                     <div class="chart-box"><canvas id="socChart"></canvas></div>
                     <div class="chart-box"><canvas id="currentChart"></canvas></div>
                 </div>
-                <div class="note-box">Pas de mesure cellule par cellule sur cette configuration (une seule broche ADC batterie) : un déséquilibre entre cellules ne serait pas détecté.</div>
+                <div class="note-box">Tension mesurée sur le pack entier (une seule entrée) : un écart entre cellules ne se voit pas ici.</div>
             </div>
 
             <!-- ---------- Système ---------- -->
             <div id="tab-systeme" class="tab-pane">
-                <div class="section-titre"><h2>Diagnostic de la liaison et du robot</h2></div>
-                <ul class="conseils" id="diag-conseils"><li>Connecte-toi au robot pour voir le diagnostic.</li></ul>
+                <div class="section-titre"><h2>Liaison et état du robot</h2></div>
+                <ul class="conseils" id="diag-conseils"><li>Se connecter au robot pour voir l'état.</li></ul>
                 <div class="tuiles">
-                    <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Coupures PC ↔ robot</div><div class="kpi-value" id="diag-coupures">0</div><div class="unite" id="diag-coupure-duree">depuis l'ouverture de la page</div></div>
-                    <div class="tuile" style="--accent:var(--cyan)"><div class="libelle">Signal WiFi le plus faible</div><div class="kpi-value" id="diag-signal">—</div><div class="unite" id="diag-signal-qualite">dBm</div></div>
-                    <div class="tuile" style="--accent:var(--violet)"><div class="libelle">Redémarrages du robot</div><div class="kpi-value" id="diag-redemarrages">0</div><div class="unite">vus pendant cette session</div></div>
-                    <div class="tuile" style="--accent:var(--rouge)"><div class="libelle">Chutes de tension</div><div class="kpi-value" id="diag-chutes">—</div><div class="unite">depuis le 1er téléversement</div></div>
+                    <div class="tuile"><div class="libelle">Coupures PC ↔ robot</div><div class="kpi-value" id="diag-coupures">0</div><div class="unite" id="diag-coupure-duree">depuis l'ouverture de la page</div></div>
+                    <div class="tuile"><div class="libelle">Signal WiFi le plus faible</div><div class="kpi-value" id="diag-signal">—</div><div class="unite" id="diag-signal-qualite">dBm</div></div>
+                    <div class="tuile"><div class="libelle">Redémarrages du robot</div><div class="kpi-value" id="diag-redemarrages">0</div><div class="unite">pendant cette visite</div></div>
+                    <div class="tuile"><div class="libelle">Chutes de tension</div><div class="kpi-value" id="diag-chutes">—</div><div class="unite">au total</div></div>
                 </div>
                 <div class="gps-details" id="diag-details"></div>
-                <div class="note-box"><b>Force du signal WiFi</b> (dBm, plus c'est proche de 0, mieux c'est) : au-dessus de −60 excellent · −60 à −70 bon · −70 à −80 faible, coupures possibles · en dessous de −80 coupures fréquentes. Le corps humain absorbe beaucoup le WiFi : ne tiens pas le robot contre toi, et ne couvre pas le bout de la carte (l'antenne).</div>
+                <div class="note-box">Signal WiFi : au-dessus de −60 dBm c'est très bien, −60 à −70 bien, −70 à −80 limite, en dessous les coupures sont fréquentes. Le corps bloque beaucoup le WiFi : ne pas tenir le robot contre soi ni couvrir le bout de la carte (l'antenne).</div>
+            </div>
+
+            <!-- ---------- Sessions ---------- -->
+            <div id="tab-sessions" class="tab-pane">
+                <div class="section-titre">
+                    <h2>Sessions enregistrées</h2>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                        <button class="btn" id="btn-sessions-actualiser">Actualiser</button>
+                        <label class="btn">Ouvrir un fichier CSV<input type="file" id="fichier-session" accept=".csv,text/csv" hidden></label>
+                    </div>
+                </div>
+                <p class="petit-texte" id="sessions-info">Le robot garde chaque session (de l'allumage à l'extinction) dans sa mémoire. Se connecter au robot pour voir la liste.</p>
+                <table class="tableau" id="table-sessions">
+                    <thead><tr><th>N°</th><th>Début</th><th>Durée</th><th class="masquable">Démarrage</th><th class="masquable">Taille</th><th></th></tr></thead>
+                    <tbody></tbody>
+                </table>
+
+                <div id="recap" class="section" hidden>
+                    <div class="section-titre">
+                        <h2 id="recap-titre">Session</h2>
+                        <div style="display:flex;gap:6px"><a class="btn" id="recap-csv" href="#">Télécharger le CSV</a><button class="btn" id="recap-fermer">Fermer</button></div>
+                    </div>
+                    <div class="tuiles" id="recap-tuiles"></div>
+                    <div class="deux-colonnes">
+                        <div><h3>Trajet GPS</h3><canvas id="recap-trajet" class="trace-canvas" width="700" height="440"></canvas><div class="trace-scale-label" id="recap-trajet-info"></div></div>
+                        <div><h3>Tension batterie</h3><canvas id="recap-batterie" class="trace-canvas" width="700" height="440"></canvas><div class="trace-scale-label" id="recap-batterie-info"></div></div>
+                    </div>
+                    <h3 style="margin-top:14px">Événements</h3>
+                    <table class="tableau" id="recap-evenements"><tbody></tbody></table>
+                </div>
             </div>
 
             <!-- ---------- Roues ---------- -->
             <div id="tab-roues" class="tab-pane">
                 <div class="deux-colonnes">
                     <div>
-                        <div class="section-titre"><h2 style="color:var(--bleu)">Roue gauche</h2></div>
+                        <div class="section-titre"><h2>Roue gauche</h2></div>
                         <div class="tuiles">
-                            <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Vitesse</div><div class="kpi-value" id="val-vitesse-roue-g">0.00</div><div class="unite">m/s</div></div>
-                            <div class="tuile" style="--accent:var(--bleu)"><div class="libelle">Distance</div><div class="kpi-value" id="val-distance-roue-g">0.00</div><div class="unite">mètres</div></div>
+                            <div class="tuile"><div class="libelle">Vitesse</div><div class="kpi-value" id="val-vitesse-roue-g">0.00</div><div class="unite">m/s</div></div>
+                            <div class="tuile"><div class="libelle">Distance</div><div class="kpi-value" id="val-distance-roue-g">0.00</div><div class="unite">m</div></div>
                         </div>
                         <div class="charts-container">
                             <div class="chart-box"><canvas id="speedChartRoueG"></canvas></div>
@@ -447,10 +466,10 @@
                         </div>
                     </div>
                     <div>
-                        <div class="section-titre"><h2 style="color:var(--orange)">Roue droite</h2></div>
+                        <div class="section-titre"><h2>Roue droite</h2></div>
                         <div class="tuiles">
-                            <div class="tuile" style="--accent:var(--orange)"><div class="libelle">Vitesse</div><div class="kpi-value" id="val-vitesse-roue-d">0.00</div><div class="unite">m/s</div></div>
-                            <div class="tuile" style="--accent:var(--orange)"><div class="libelle">Distance</div><div class="kpi-value" id="val-distance-roue-d">0.00</div><div class="unite">mètres</div></div>
+                            <div class="tuile"><div class="libelle">Vitesse</div><div class="kpi-value" id="val-vitesse-roue-d">0.00</div><div class="unite">m/s</div></div>
+                            <div class="tuile"><div class="libelle">Distance</div><div class="kpi-value" id="val-distance-roue-d">0.00</div><div class="unite">m</div></div>
                         </div>
                         <div class="charts-container">
                             <div class="chart-box"><canvas id="speedChartRoueD"></canvas></div>
@@ -458,13 +477,17 @@
                         </div>
                     </div>
                 </div>
+                <p class="note-box">Pas encore de capteur sur les roues : ces valeurs restent à 0 avec le vrai robot (elles bougent en mode démo).</p>
             </div>
         </section>
     </main>
 
-    <footer class="pied" id="reseau-info">Connectez ce PC au WiFi <b>ROBOT_ESP32</b> (mot de passe motdepasse123), puis ouvrez <b>http://192.168.4.1</b>.</footer>
+    <footer class="pied" id="reseau-info">Connecter ce PC au WiFi <b>ROBOT_ESP32</b> (mot de passe motdepasse123), puis ouvrir <b>http://192.168.4.1</b>.</footer>
 
     <script>
+        // Couleurs du thème (définies en haut, dans :root), pour les dessins sur canvas
+        const coul = nom => getComputedStyle(document.documentElement).getPropertyValue('--' + nom).trim();
+
         // ==================== GRAPHIQUES (sans bibliothèque, fonctionne hors Internet) ====================
         const maxDataPoints = 100; // 10 s d'historique (un point toutes les 100 ms)
         class MiniChart {
@@ -476,7 +499,7 @@
                 this.data = Array(maxDataPoints).fill(opts.initial ?? 0);
                 const entete = document.createElement('div');
                 entete.className = 'chart-entete';
-                entete.innerHTML = `<span><i style="background:${couleur}"></i>${label}</span><b></b>`;
+                entete.innerHTML = `<span><i style="background:var(--${couleur})"></i>${label}</span><b></b>`;
                 this.canvas.before(entete);
                 this.elValeur = entete.querySelector('b');
                 this.aDessiner = true;
@@ -498,33 +521,27 @@
                 const y = v => haut + (h - haut - bas) * (1 - (Math.min(max, Math.max(min, v)) - min) / (max - min));
                 const x = i => g + (w - g - d) * i / (this.data.length - 1);
                 const dec = (max - min) < 0.05 ? 4 : (max - min) < 5 ? 2 : 0;
-                ctx.font = '10px system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+                ctx.font = '10px "Segoe UI", system-ui, sans-serif'; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
                 for (let i = 0; i <= 3; i++) {
-                    const v = min + (max - min) * i / 3, py = y(v);
-                    ctx.strokeStyle = 'rgba(140,147,184,0.12)'; ctx.lineWidth = 1;
+                    const v = min + (max - min) * i / 3, py = Math.round(y(v)) + 0.5;
+                    ctx.strokeStyle = coul('grille'); ctx.lineWidth = 1;
                     ctx.beginPath(); ctx.moveTo(g, py); ctx.lineTo(w - d, py); ctx.stroke();
-                    ctx.fillStyle = '#5d6490'; ctx.fillText(v.toFixed(dec), g - 6, py);
+                    ctx.fillStyle = coul('discret'); ctx.fillText(v.toFixed(dec), g - 6, py);
                 }
                 ctx.beginPath();
                 this.data.forEach((v, i) => i === 0 ? ctx.moveTo(x(i), y(v)) : ctx.lineTo(x(i), y(v)));
-                ctx.strokeStyle = this.couleur; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.stroke();
-                ctx.lineTo(x(this.data.length - 1), h - bas); ctx.lineTo(x(0), h - bas); ctx.closePath();
-                const degrade = ctx.createLinearGradient(0, haut, 0, h - bas);
-                degrade.addColorStop(0, this.couleur + '55'); degrade.addColorStop(1, this.couleur + '00');
-                ctx.fillStyle = degrade; ctx.fill();
-                const dernier = this.data[this.data.length - 1];
-                ctx.fillStyle = this.couleur; ctx.beginPath(); ctx.arc(x(this.data.length - 1), y(dernier), 3, 0, 2 * Math.PI); ctx.fill();
+                ctx.strokeStyle = coul(this.couleur); ctx.lineWidth = 1.5; ctx.lineJoin = 'round'; ctx.stroke();
             }
         }
-        const globalSpeedChart = new MiniChart('globalSpeedChart', 'Vitesse globale (m/s)', '#34d399');
-        const consumptionChart = new MiniChart('consumptionChart', 'Consommation cumulée (Ah)', '#f472b6', { decimales: 4 });
-        const batteryChart = new MiniChart('batteryChart', 'Tension pack (V)', '#60a5fa', { min: 9, max: 13, initial: 12.3 });
-        const socChart = new MiniChart('socChart', 'SoC (%)', '#22d3ee', { min: 0, max: 100, initial: 100, decimales: 0 });
-        const currentChart = new MiniChart('currentChart', 'Courant (A)', '#fbbf24');
-        const speedChartRoueG = new MiniChart('speedChartRoueG', 'Vitesse (m/s)', '#60a5fa');
-        const distanceChartRoueG = new MiniChart('distanceChartRoueG', 'Distance (m)', '#93c5fd');
-        const speedChartRoueD = new MiniChart('speedChartRoueD', 'Vitesse (m/s)', '#fbbf24');
-        const distanceChartRoueD = new MiniChart('distanceChartRoueD', 'Distance (m)', '#fcd34d');
+        const globalSpeedChart = new MiniChart('globalSpeedChart', 'Vitesse moyenne (m/s)', 'vert');
+        const consumptionChart = new MiniChart('consumptionChart', 'Consommation (Ah)', 'rose', { decimales: 4 });
+        const batteryChart = new MiniChart('batteryChart', 'Tension (V)', 'bleu', { min: 9, max: 13, initial: 12.3 });
+        const socChart = new MiniChart('socChart', 'Charge (%)', 'cyan', { min: 0, max: 100, initial: 100, decimales: 0 });
+        const currentChart = new MiniChart('currentChart', 'Courant (A)', 'orange');
+        const speedChartRoueG = new MiniChart('speedChartRoueG', 'Vitesse (m/s)', 'bleu');
+        const distanceChartRoueG = new MiniChart('distanceChartRoueG', 'Distance (m)', 'bleu');
+        const speedChartRoueD = new MiniChart('speedChartRoueD', 'Vitesse (m/s)', 'orange');
+        const distanceChartRoueD = new MiniChart('distanceChartRoueD', 'Distance (m)', 'orange');
         const tousLesCharts = [globalSpeedChart, consumptionChart, batteryChart, socChart, currentChart, speedChartRoueG, distanceChartRoueG, speedChartRoueD, distanceChartRoueD];
 
         // On ne redessine que les graphiques visibles, au rythme de l'écran.
@@ -541,6 +558,7 @@
             tousLesCharts.forEach(c => c.aDessiner = true);
             if (tabId === 'tab-gps') dessinerTraceGPS();
             if (tabId === 'tab-global') dessinerTrace();
+            if (tabId === 'tab-sessions') chargerSessions();
         }
         document.querySelectorAll('.tab-btn').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
         document.getElementById('gps-resume').addEventListener('click', () => switchTab('tab-gps'));
@@ -628,8 +646,8 @@
             const dot = $('stick-dot-physique');
             placerPoint(dot, x, y);
             dot.style.opacity = manetteConnectee ? '1' : '0.3';
-            $('label-joystick-source').textContent = manetteConnectee ? 'En direct (via le robot)' : 'Non connectée au robot';
-            $('label-joystick-bouton').textContent = bouton ? 'Arrêt d’urgence' : 'Relâché';
+            $('label-joystick-source').textContent = manetteConnectee ? 'en direct' : 'pas connectée';
+            $('label-joystick-bouton').textContent = bouton ? 'appuyé (arrêt)' : 'relâché';
             $('label-joystick-bouton').style.color = bouton ? 'var(--rouge)' : 'var(--vert)';
             $('label-joystick-valeurs').textContent = `X ${x.toFixed(2)} · Y ${y.toFixed(2)}`;
         }
@@ -644,15 +662,15 @@
         }
 
         const NOMS_PILOTES = {
-            'aucun': ['À l’arrêt', 'var(--attenue)', 'var(--surface-3)'],
-            'manette': ['Pilote : ESP32 Manette', '#fff', 'rgba(192,132,252,0.35)'],
-            'ihm': ['Pilote : cette IHM', '#fff', 'rgba(96,165,250,0.35)'],
-            'joystick-local': ['Pilote : joystick du robot', '#fff', 'rgba(251,191,36,0.35)'],
-            'arret-urgence': ['ARRÊT D’URGENCE', '#fff', 'rgba(248,113,113,0.6)'],
+            'aucun': ['à l’arrêt', ''],
+            'manette': ['commandé par la manette', 'info'],
+            'ihm': ['commandé depuis cette page', 'info'],
+            'joystick-local': ['joystick du robot', 'info'],
+            'arret-urgence': ['arrêt d’urgence', 'urgence'],
         };
         function afficherPilote(pilote) {
-            const [texte, couleur, fond] = NOMS_PILOTES[pilote] || ['Robot non connecté', 'var(--attenue)', 'var(--surface-3)'];
-            const el = $('pilote-label'); el.textContent = texte; el.style.color = couleur; el.style.background = fond;
+            const [texte, classe] = NOMS_PILOTES[pilote] || ['robot non connecté', ''];
+            const el = $('pilote-label'); el.textContent = texte; el.className = 'badge ' + classe;
         }
 
         function setDot(id, etat) { $(id).className = 'status-dot' + (etat ? ' ' + etat : ''); }
@@ -661,14 +679,14 @@
             if (data.manetteConnectee !== undefined) {
                 const ok = !!data.manetteConnectee;
                 setDot('dot-manette-esp32', ok ? 'ok' : 'error');
-                $('label-manette-esp32').textContent = ok ? `Connectée · ${Number(data.manetteRssi) || 0} dBm` : 'Non connectée (allumée ?)';
+                $('label-manette-esp32').textContent = ok ? `connectée (${Number(data.manetteRssi) || 0} dBm)` : 'pas connectée';
             }
             if (data.apClients !== undefined) {
-                let t = `Point d'accès ROBOT_ESP32 : ${data.apClients} appareil(s)`;
-                if (data.ihmClients !== undefined) t += ` · ${data.ihmClients} IHM en temps réel`;
-                t += data.staConnecte ? ` · Robot aussi sur « ${data.staSsid} » (http://${data.staIp})` : ' · pas de réseau externe';
-                if (data.uptime !== undefined) t += ` · allumé depuis ${Math.floor(data.uptime / 60)} min ${data.uptime % 60} s`;
-                if (data.carte) { t = `Robot : ${data.carte} · ` + t; $('label-carte').textContent = `${data.carte} · roues · GPS · WiFi`; }
+                let t = `WiFi ROBOT_ESP32 : ${data.apClients} appareil(s) connecté(s)`;
+                if (data.staConnecte) t += ` · aussi sur « ${data.staSsid} » (http://${data.staIp})`;
+                if (data.uptime !== undefined) t += ` · robot allumé depuis ${Math.floor(data.uptime / 60)} min ${data.uptime % 60} s`;
+                if (data.session) t += ` · session n°${data.session}${data.journalDispo === false ? ' (non enregistrée)' : ''}`;
+                if (data.carte) { t = `${data.carte} · ` + t; $('label-carte').textContent = `${data.carte} · roues · GPS · WiFi`; }
                 $('reseau-info').textContent = t;
             }
             if (data.pilote !== undefined) afficherPilote(data.pilote);
@@ -678,9 +696,9 @@
                 if (dernierUptime !== null && data.uptime + 2 < dernierUptime) {
                     redemarragesVus++;
                     const cause = data.causeDemarrage || 'inconnue';
-                    let texte = `⚠️ Le robot vient de redémarrer (cause : ${cause}).`;
-                    if (/tension/.test(cause)) texte += ' Son alimentation est trop faible : voir l\u2019onglet Système.';
-                    else texte += ' Chaque redémarrage coupe la liaison et oblige le GPS à retrouver ses satellites.';
+                    let texte = `Le robot vient de redémarrer (${cause}).`;
+                    if (/tension/.test(cause)) texte += ' L\u2019alimentation ne suit pas : voir l\u2019onglet Système.';
+                    else texte += ' La liaison a été coupée et le GPS doit retrouver ses satellites.';
                     afficherBandeau(texte);
                 }
                 dernierUptime = data.uptime;
@@ -692,10 +710,10 @@
         $('bandeau-fermer').addEventListener('click', () => $('bandeau-alerte').classList.remove('visible'));
 
         function qualiteSignal(dbm) {
-            if (dbm >= -60) return ['excellent', 'var(--vert)'];
-            if (dbm >= -70) return ['bon', 'var(--vert)'];
-            if (dbm >= -80) return ['faible : coupures possibles', 'var(--orange)'];
-            return ['très faible : coupures fréquentes', 'var(--rouge)'];
+            if (dbm >= -60) return ['très bien', 'var(--vert)'];
+            if (dbm >= -70) return ['bien', 'var(--vert)'];
+            if (dbm >= -80) return ['limite', 'var(--orange)'];
+            return ['trop faible', 'var(--rouge)'];
         }
 
         // Onglet Système : mis à jour 2 fois par seconde
@@ -718,76 +736,77 @@
                 ['Cause du dernier démarrage', d.causeDemarrage || '—'],
                 ['Démarrages au total', d.demarrages ?? '—'],
                 ['Appareils sur ROBOT_ESP32', d.apClients !== undefined ? `${d.apClients} (signal : ${signaux.map(x => x + ' dBm').join(', ') || '—'})` : '—'],
-                ['Signal reçu par la Manette', d.manetteConnectee ? `${d.manetteRssi} dBm` : 'Manette non connectée'],
-                ['Déconnexions WiFi (vues par le robot)', d.apDeconnexions ?? '—'],
+                ['Signal reçu par la manette', d.manetteConnectee ? `${d.manetteRssi} dBm` : 'manette pas connectée'],
+                ['Déconnexions WiFi vues par le robot', d.apDeconnexions ?? '—'],
+                ['Session en cours', d.session ? `n°${d.session}${d.journalDispo === false ? ' (enregistrement impossible : partition)' : d.journalPlein ? ' (mémoire pleine)' : ''}` : '—'],
                 ['Canal WiFi', d.wifiCanal ?? '—'],
                 ['Mémoire libre (minimum)', d.memLibre !== undefined ? `${Math.round(d.memLibre / 1024)} Ko (${Math.round(d.memMin / 1024)} Ko)` : '—'],
-                ['Liaison avec cette IHM', `${transport === 'ws' ? 'WebSocket' : 'HTTP'} · latence ${$('val-latence').textContent}`],
+                ['Liaison avec cette page', `${transport === 'ws' ? 'WebSocket' : 'HTTP'}, ${$('val-latence').textContent}`],
             ];
             $('diag-details').innerHTML = lignes.map(([k, v]) => `<div>${k} : <b>${String(v).replace(/</g, '&lt;')}</b></div>`).join('');
 
             // Conseils selon ce qu'on observe
             const conseils = [];
             if (/tension/.test(d.causeDemarrage || '') || redemarragesVus > 0 && d.chutesTension > 0)
-                conseils.push(['alerte', 'Le robot redémarre à cause d\u2019une <b>chute de tension</b> : alimentation trop faible. Utilise une batterie externe qui ne se coupe pas toute seule (certaines s\u2019éteignent quand on consomme peu), un câble USB court et épais, ou baisse <code>PUISSANCE_WIFI</code> dans robot.ino. Chaque redémarrage coupe la liaison et le GPS repart de zéro.']);
+                conseils.push(['alerte', 'Le robot redémarre sur une <b>chute de tension</b>. Essayer une autre batterie externe (certaines se coupent quand on consomme peu), un câble USB plus court, ou baisser <code>PUISSANCE_WIFI</code> dans robot.ino.']);
             else if (redemarragesVus > 0)
-                conseils.push(['attention', `Le robot a redémarré ${redemarragesVus} fois pendant cette session (cause : ${d.causeDemarrage}). S\u2019il était sur batterie externe, elle s\u2019est peut-être coupée : la cause affichée est alors « mise sous tension ».`]);
+                conseils.push(['attention', `Le robot a redémarré ${redemarragesVus} fois (${d.causeDemarrage}). « Mise sous tension » veut souvent dire que la batterie externe s\u2019est coupée.`]);
             if (signaux.length && Math.min(...signaux) < -75)
-                conseils.push(['attention', `Signal WiFi faible (${Math.min(...signaux)} dBm) : rapproche le PC du robot, ne tiens pas le robot contre toi (le corps bloque le WiFi), ne couvre pas le bout de la carte où se trouve l\u2019antenne. Dehors, compte quelques dizaines de mètres de portée au maximum.`]);
+                conseils.push(['attention', `Signal faible (${Math.min(...signaux)} dBm). Rapprocher le PC, ne pas tenir le robot contre soi ni couvrir l\u2019antenne (bout de la carte). Dehors, la portée est de quelques dizaines de mètres.`]);
             if (nbCoupures > 0 && redemarragesVus === 0 && !(signaux.length && Math.min(...signaux) < -75))
-                conseils.push(['attention', `${nbCoupures} coupure(s) sans redémarrage du robot ni signal faible. Vérifie que Windows ne quitte pas le WiFi ROBOT_ESP32 pour un autre réseau qui a Internet (téléphone, box) : dans les paramètres WiFi, désactive la connexion automatique des autres réseaux pendant les essais.`]);
-            if (!conseils.length) conseils.push(['ok', 'Aucun problème détecté : liaison stable, pas de redémarrage du robot.']);
+                conseils.push(['attention', `${nbCoupures} coupure(s) sans redémarrage ni signal faible. Windows quitte peut-être ROBOT_ESP32 pour un réseau avec Internet : couper la connexion automatique des autres réseaux pendant les essais.`]);
+            if (!conseils.length) conseils.push(['ok', 'Rien à signaler.']);
             $('diag-conseils').innerHTML = conseils.map(([c, t]) => `<li class="${c}">${t}</li>`).join('');
         }, 500);
 
         // ---------- Satellites : force du signal et position dans le ciel ----------
         const NOMS_SYSTEMES = { G: 'GPS', B: 'BeiDou', R: 'GLONASS', E: 'Galileo', Q: 'QZSS', '?': '?' };
-        function couleurSnr(snr) { return snr < 0 ? '#5d6490' : snr >= 35 ? '#34d399' : snr >= 25 ? '#fbbf24' : '#f87171'; }
+        function couleurSnr(snr) { return coul(snr < 0 ? 'discret' : snr >= 35 ? 'vert' : snr >= 25 ? 'orange' : 'rouge'); }
 
         function afficherSatellites(sats) {
             const liste = sats.map(([sys, num, elev, az, snr]) => ({ sys, num, elev, az, snr })).sort((a, b) => b.snr - a.snr);
             const forts = liste.filter(s => s.snr >= 30).length, recus = liste.filter(s => s.snr > 0).length;
             const badge = $('badge-reception');
-            let texte, fond, couleur, note;
+            let texte, classe, note;
             if (!liste.length) {
-                [texte, fond, couleur] = ['Aucun satellite', 'rgba(248,113,113,0.25)', '#fca5a5'];
-                note = 'Le module ne voit aucun satellite : il est en intérieur, son antenne est couverte, ou il vient de démarrer (attendre 1 min).';
+                [texte, classe] = ['aucun satellite', 'alerte'];
+                note = 'Aucun satellite vu : module à l\u2019intérieur, antenne couverte, ou il vient de démarrer.';
             } else if (forts >= 6) {
-                [texte, fond, couleur] = ['Bonne réception', 'rgba(52,211,153,0.25)', '#6ee7b7'];
-                note = `${forts} satellites au-dessus de 30 dB-Hz : une position précise (quelques mètres) est possible.`;
+                [texte, classe] = ['bonne', 'ok'];
+                note = `${forts} satellites au-dessus de 30 dB-Hz : de quoi avoir une position à quelques mètres près.`;
             } else if (forts >= 4) {
-                [texte, fond, couleur] = ['Réception moyenne', 'rgba(251,191,36,0.25)', '#fcd34d'];
-                note = `${forts} satellites au-dessus de 30 dB-Hz : la position est possible mais moins précise. Plus de ciel dégagé = plus de satellites forts.`;
+                [texte, classe] = ['moyenne', 'attention'];
+                note = `${forts} satellites au-dessus de 30 dB-Hz : position possible, mais peu précise.`;
             } else {
-                [texte, fond, couleur] = ['Réception insuffisante', 'rgba(248,113,113,0.25)', '#fca5a5'];
-                note = `Seulement ${forts} satellite(s) au-dessus de 30 dB-Hz (${recus} reçu(s) au total) : il en faut au moins 4, idéalement 6. Va dehors, loin des murs, antenne vers le ciel, et éloigne le GPS de l\u2019ESP32 et des moteurs.`;
+                [texte, classe] = ['insuffisante', 'alerte'];
+                note = `${forts} satellite(s) au-dessus de 30 dB-Hz sur ${recus} reçu(s) : il en faut au moins 4.`;
             }
-            badge.textContent = texte; badge.style.background = fond; badge.style.color = couleur;
+            badge.textContent = texte; badge.className = 'badge-etat-bms ' + classe;
             $('note-reception').textContent = note;
 
             $('barres-sats').innerHTML = liste.length ? liste.map(s => {
                 const h = s.snr > 0 ? Math.min(100, s.snr / 50 * 100) : 3;
                 const titre = `${NOMS_SYSTEMES[s.sys] || s.sys} n°${s.num} — ${s.snr > 0 ? s.snr + ' dB-Hz' : 'pas reçu'}${s.elev >= 0 ? `, ${s.elev}° au-dessus de l\u2019horizon` : ''}`;
                 return `<div class="barre-sat" title="${titre}"><b>${s.snr > 0 ? s.snr : ''}</b><div class="remplissage" style="height:${h}%;background:${couleurSnr(s.snr)}"></div>${s.sys}${s.num}</div>`;
-            }).join('') : '<span style="margin:auto;font-size:0.85em">Aucun satellite vu</span>';
+            }).join('') : '<span style="margin:auto;font-size:12px">aucun satellite vu</span>';
             dessinerCiel(liste);
         }
 
         function dessinerCiel(liste) {
             const c = $('cielCanvas'), ctx = c.getContext('2d'), w = c.width, cx = w / 2, R = w / 2 - 30;
             ctx.clearRect(0, 0, w, w);
-            ctx.strokeStyle = 'rgba(140,147,184,0.25)'; ctx.lineWidth = 1.5;
+            ctx.strokeStyle = coul('bord-fort'); ctx.lineWidth = 1;
             [0, 30, 60].forEach(e => { ctx.beginPath(); ctx.arc(cx, cx, R * (90 - e) / 90, 0, 2 * Math.PI); ctx.stroke(); });
             ctx.beginPath(); ctx.moveTo(cx - R, cx); ctx.lineTo(cx + R, cx); ctx.moveTo(cx, cx - R); ctx.lineTo(cx, cx + R); ctx.stroke();
-            ctx.fillStyle = '#8c93b8'; ctx.font = 'bold 22px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillStyle = coul('attenue'); ctx.font = '600 20px "Segoe UI", system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
             ctx.fillText('N', cx, 14); ctx.fillText('S', cx, w - 14); ctx.fillText('E', w - 14, cx); ctx.fillText('O', 14, cx);
-            ctx.font = '15px system-ui, sans-serif'; ctx.fillStyle = '#5d6490';
+            ctx.font = '14px "Segoe UI", system-ui, sans-serif'; ctx.fillStyle = coul('discret');
             ctx.fillText('30°', cx + 6, cx - R * 60 / 90 + 12); ctx.fillText('60°', cx + 6, cx - R * 30 / 90 + 12);
             liste.filter(s => s.elev >= 0 && s.az >= 0).forEach(s => {
                 const r = R * (90 - s.elev) / 90, a = s.az * Math.PI / 180;
                 const x = cx + r * Math.sin(a), y = cx - r * Math.cos(a);
-                ctx.fillStyle = couleurSnr(s.snr); ctx.beginPath(); ctx.arc(x, y, 13, 0, 2 * Math.PI); ctx.fill();
-                ctx.fillStyle = '#0d1020'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.fillText(s.num, x, y + 1);
+                ctx.fillStyle = couleurSnr(s.snr); ctx.beginPath(); ctx.arc(x, y, 12, 0, 2 * Math.PI); ctx.fill();
+                ctx.fillStyle = '#fff'; ctx.font = '600 12px "Segoe UI", system-ui, sans-serif'; ctx.fillText(s.num, x, y + 1);
             });
         }
         dessinerCiel([]);
@@ -799,27 +818,27 @@
         }, 1500);
 
         function reinitialiserAffichageLiaisons() {
-            setDot('dot-manette-esp32', ''); $('label-manette-esp32').textContent = 'Inconnue';
-            setDot('dot-gps', ''); $('label-gps-liaison').textContent = 'Inconnu';
-            $('val-latence').textContent = '— ms'; $('val-latence').style.color = ''; $('label-transport').textContent = 'latence';
+            setDot('dot-manette-esp32', ''); $('label-manette-esp32').textContent = '?';
+            setDot('dot-gps', ''); $('label-gps-liaison').textContent = '?';
+            $('val-latence').textContent = '— ms'; $('val-latence').style.color = ''; $('label-transport').textContent = '';
             afficherPilote(null);
             afficherJoystickPhysique(0, 0, false, false);
         }
 
         // ==================== GPS ====================
-        const ETATS_GPS = {
-            'detection':  { badge: 'Détection du module...', couleur: 'rgba(96,165,250,0.25)', texte: '#93c5fd', dot: 'warn',
-                            note: 'Le robot cherche sur quelle broche et à quelle vitesse (9600, 115200... bauds) le GPS envoie ses données. Quelques secondes suffisent.' },
-            'fix':        { badge: 'Position acquise', couleur: 'rgba(52,211,153,0.25)', texte: '#6ee7b7', dot: 'ok',
-                            note: 'Position reçue du module GPS, transmise par le WiFi du robot.' },
-            'simulation': { badge: 'Simulation', couleur: 'rgba(192,132,252,0.25)', texte: '#d8b4fe', dot: 'ok',
-                            note: 'Position SIMULÉE par le robot (GPS_SIMULATION = 1 dans robot.ino). Toute la chaîne ESP32 → WiFi → IHM est testée, sans le module.' },
-            'recherche':  { badge: 'Recherche satellites', couleur: 'rgba(251,191,36,0.25)', texte: '#fcd34d', dot: 'warn',
-                            note: 'Le module GPS est bien câblé et communique avec l’ESP32 (données reçues). Il lui faut maintenant une vue dégagée sur le ciel pour calculer sa position : dehors ou contre une fenêtre, compter 1 à 5 minutes au premier démarrage.' },
-            'absent':     { badge: 'Module non détecté', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
-                            note: 'Le robot a essayé toutes ses broches libres et toutes les vitesses courantes sans recevoir de données GPS (nouvel essai automatique toutes les 10 s). Vérifier le câblage sur l\u2019ESP32 robot : fil TX du GPS → GPIO14 sur l\u2019ESP32-S3 N16R8 (D7 sur une XIAO), VCC → 3V3 (ou 5V selon le module), GND → GND. Le RX du module reste libre. La LED du module GPS doit être allumée.' },
-            'illisible':  { badge: 'Données illisibles', couleur: 'rgba(248,113,113,0.25)', texte: '#fca5a5', dot: 'error',
-                            note: 'Le robot reçoit des données du GPS mais ne peut pas les décoder : vérifier la vitesse série (9600 bauds par défaut pour l’Air530) et le fil de masse commun.' },
+        const ETATS_GPS = { // badge, classe de couleur, voyant, explication
+            'detection':  { badge: 'détection du module', classe: 'info', dot: 'warn',
+                            note: 'Le robot cherche sur quelle broche et à quelle vitesse arrivent les données du GPS. Ça prend quelques secondes.' },
+            'fix':        { badge: 'position trouvée', classe: 'ok', dot: 'ok',
+                            note: 'Position lue par le robot sur le module GPS.' },
+            'simulation': { badge: 'simulation', classe: 'info', dot: 'ok',
+                            note: 'Position inventée par le robot (GPS_SIMULATION = 1 dans robot.ino), pour tester sans le module.' },
+            'recherche':  { badge: 'recherche des satellites', classe: 'attention', dot: 'warn',
+                            note: 'Le module est bien branché et répond, mais il n\u2019a pas encore assez de satellites pour calculer une position. Il faut le ciel dégagé ; au premier démarrage, compter 1 à 5 min.' },
+            'absent':     { badge: 'GPS introuvable', classe: 'alerte', dot: 'error',
+                            note: 'Aucune donnée GPS sur les broches essayées (nouvel essai toutes les 10 s). À vérifier : TX du GPS sur GPIO14 (D7 sur une XIAO), VCC sur 3V3 ou 5V selon le module, GND commun, LED du module allumée.' },
+            'illisible':  { badge: 'données illisibles', classe: 'alerte', dot: 'error',
+                            note: 'Des données arrivent mais ce ne sont pas des trames GPS valides : vérifier le GND commun et la vitesse du module.' },
         };
 
         let gpsOrigine = null, gpsChemin = [], gpsDernier = null, gpsCourant = null, gpsNuage = [], gpsDistance = 0, gpsCapRad = null;
@@ -842,9 +861,9 @@
             const satsVisibles = data.gpsSatellitesVisibles !== undefined ? Number(data.gpsSatellitesVisibles) || 0 : null;
 
             let badge = infos.badge;
-            if (etat === 'recherche' && satsVisibles) badge = `Recherche · ${satsVisibles} satellites entendus`;
-            if (etat === 'detection' && data.gpsEssai) badge = `Détection · essai ${data.gpsEssai.replace(/ \(GPIO\d+\)/, '')}`;
-            document.querySelectorAll('[data-gps=badge]').forEach(el => { el.textContent = badge; el.style.background = infos.couleur; el.style.color = infos.texte; });
+            if (etat === 'recherche' && satsVisibles) badge = `recherche (${satsVisibles} satellites vus)`;
+            if (etat === 'detection' && data.gpsEssai) badge = `détection : essai ${data.gpsEssai.replace(/ \(GPIO\d+\)/, '')}`;
+            document.querySelectorAll('[data-gps=badge]').forEach(el => { el.textContent = badge; el.className = 'badge-etat-bms ' + infos.classe; });
             document.querySelectorAll('[data-gps=lat]').forEach(el => { el.textContent = connue ? lat.toFixed(6) : '--'; el.classList.toggle('perime', !fix); });
             document.querySelectorAll('[data-gps=lon]').forEach(el => { el.textContent = connue ? lon.toFixed(6) : '--'; el.classList.toggle('perime', !fix); });
             document.querySelectorAll('[data-gps=sat]').forEach(el => el.textContent = satsVisibles !== null ? `${sats} / ${satsVisibles}` : sats);
@@ -891,9 +910,9 @@
 
         function afficherGPSDeconnecte() {
             gpsDernierEtatAffiche = null;
-            document.querySelectorAll('[data-gps=badge]').forEach(el => { el.textContent = 'Robot non connecté'; el.style.background = ''; el.style.color = ''; });
+            document.querySelectorAll('[data-gps=badge]').forEach(el => { el.textContent = 'robot non connecté'; el.className = 'badge-etat-bms'; });
             document.querySelectorAll('[data-gps=lat],[data-gps=lon]').forEach(el => el.classList.add('perime'));
-            $('note-gps').textContent = 'Connectez-vous au robot pour recevoir la position GPS.';
+            $('note-gps').textContent = 'Pas de données tant que le robot n\u2019est pas connecté.';
         }
 
         // La position reçue est déjà FILTRÉE par le robot (gps_filtre.h) : immobile, elle ne bouge plus.
@@ -936,7 +955,7 @@
         function setEsp32Status(state, text) { setDot('dot-esp32', state); $('label-esp32-status').textContent = text; }
         function setMode(connecte) {
             const m = $('mode-label');
-            m.textContent = connecte ? `Robot réel (${transport === 'ws' ? 'WebSocket temps réel' : 'HTTP'})` : 'Démo (simulation locale)';
+            m.textContent = connecte ? `vrai robot (${transport === 'ws' ? 'WebSocket' : 'HTTP'})` : 'démo (robot simulé)';
             m.style.color = connecte ? 'var(--vert)' : 'var(--orange)';
         }
 
@@ -952,29 +971,29 @@
                 if (liaisonInstable || liaisonPerdue) { // fin d'une coupure
                     nbCoupures++; dureeDerniereCoupure = maintenant - debutCoupureMs;
                     liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
-                    if (httpConnecte) setEsp32Status('ok', `Connecté · ${esp32Host}`);
+                    if (httpConnecte) setEsp32Status('ok', `connecté (${esp32Host})`);
                 }
                 derniereReponseOkMs = maintenant;
                 if (!httpConnecte) {
                     httpConnecte = true; dernierTelemetryTimestamp = null;
-                    setEsp32Status('ok', `Connecté · ${esp32Host}`);
+                    setEsp32Status('ok', `connecté (${esp32Host})`);
                     $('btn-connect-esp32').textContent = 'Déconnecter'; $('btn-connect-esp32').classList.add('connected'); setMode(true);
                 }
             } else if (httpConnecte) {
                 const ecart = performance.now() - derniereReponseOkMs;
                 if (ecart > SEUIL_INSTABLE_MS && ecart <= HTTP_PERTE_LIAISON_MS) {
                     if (!liaisonInstable) { liaisonInstable = true; debutCoupureMs = derniereReponseOkMs; document.body.classList.add('instable'); }
-                    setEsp32Status('warn', `Signal faible · ${(ecart / 1000).toFixed(1)} s sans données`);
+                    setEsp32Status('warn', `signal faible, rien reçu depuis ${(ecart / 1000).toFixed(1)} s`);
                 }
                 if (ecart > HTTP_PERTE_LIAISON_MS) {
                     if (!liaisonInstable) debutCoupureMs = derniereReponseOkMs;
                     liaisonInstable = false; liaisonPerdue = true; document.body.classList.remove('instable');
-                    httpConnecte = false; setEsp32Status('warn', 'Liaison perdue, reconnexion...'); setMode(false);
+                    httpConnecte = false; setEsp32Status('warn', 'liaison perdue, nouvel essai…'); setMode(false);
                     reinitialiserAffichageLiaisons(); afficherGPSDeconnecte();
                     if (wsSocket) wsSocket.close(); // force une reconnexion propre
                 }
             } else if (performance.now() - tentativeConnexionDepuisMs > HTTP_PERTE_LIAISON_MS) {
-                setEsp32Status('error', 'Injoignable — PC connecté à ROBOT_ESP32 ?');
+                setEsp32Status('error', 'injoignable (PC sur le WiFi ROBOT_ESP32 ?)');
             }
         }
 
@@ -992,6 +1011,7 @@
                 ouvert = true; clearTimeout(garde); wsEchecs = 0;
                 transport = 'ws'; arreterHttp(); derniereCmdEnvoyee = null;
                 if (httpConnecte) setMode(true);
+                envoyerHeure();
             };
             s.onmessage = ev => {
                 const m = ev.data;
@@ -1021,6 +1041,7 @@
             if (httpConnecte) setMode(true);
             if (!telemetrieTimer) telemetrieTimer = setInterval(lireTelemetrieHttp, INTERVALLE_TELEMETRIE_HTTP_MS);
             lireTelemetrieHttp();
+            envoyerHeure();
         }
         function arreterHttp() { clearInterval(telemetrieTimer); telemetrieTimer = null; }
 
@@ -1103,7 +1124,7 @@
             derniereReponseOkMs = performance.now(); tentativeConnexionDepuisMs = performance.now();
             derniereCmdEnvoyee = null; wsEchecs = 0; transport = null;
             dernierUptime = null; liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
-            setEsp32Status('warn', 'Connexion en cours...');
+            setEsp32Status('warn', 'connexion…');
             $('btn-connect-esp32').textContent = 'Annuler';
             ouvrirWebSocket();
         }
@@ -1113,7 +1134,7 @@
             clearTimeout(wsRelanceTimer); arreterHttp();
             if (wsSocket) { const s = wsSocket; wsSocket = null; s.close(); }
             liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
-            setEsp32Status('', 'Déconnecté'); $('btn-connect-esp32').textContent = 'Se connecter'; $('btn-connect-esp32').classList.remove('connected'); setMode(false);
+            setEsp32Status('', 'déconnecté'); $('btn-connect-esp32').textContent = 'Se connecter'; $('btn-connect-esp32').classList.remove('connected'); setMode(false);
             reinitialiserAffichageLiaisons(); afficherGPSDeconnecte();
         }
 
@@ -1178,7 +1199,7 @@
         // Dessine un chemin (coordonnées en mètres) centré et mis à l'échelle dans le canvas.
         function dessinerChemin(canvas, points, courant, headingRad, couleur, nuage = []) {
             const ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
-            ctx.fillStyle = '#0b0e1c'; ctx.fillRect(0, 0, w, h);
+            ctx.fillStyle = coul('trace-fond'); ctx.fillRect(0, 0, w, h);
             const marge = 0.5;
             const tous = points.concat(nuage);
             const xs = tous.map(p => p.x).concat([0, courant.x]), ys = tous.map(p => p.y).concat([0, courant.y]);
@@ -1189,19 +1210,19 @@
             const toScreen = (x, y) => ({ sx: w / 2 + (x - cx) * scale, sy: h / 2 - (y - cy) * scale });
             const pas = pasDeGrille(Math.max(w, h) / scale);
             const x0 = cx - w / 2 / scale, x1 = cx + w / 2 / scale, y0 = cy - h / 2 / scale, y1 = cy + h / 2 / scale;
-            ctx.strokeStyle = 'rgba(140,147,184,0.1)'; ctx.lineWidth = 1;
+            ctx.strokeStyle = coul('grille'); ctx.lineWidth = 1;
             for (let gx = Math.ceil(x0 / pas) * pas; gx <= x1; gx += pas) { const p1 = toScreen(gx, y0), p2 = toScreen(gx, y1); ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke(); }
             for (let gy = Math.ceil(y0 / pas) * pas; gy <= y1; gy += pas) { const p1 = toScreen(x0, gy), p2 = toScreen(x1, gy); ctx.beginPath(); ctx.moveTo(p1.sx, p1.sy); ctx.lineTo(p2.sx, p2.sy); ctx.stroke(); }
-            ctx.fillStyle = 'rgba(163,230,53,0.28)'; // mesures brutes (bruit du GPS)
+            ctx.fillStyle = coul('discret'); ctx.globalAlpha = 0.45; // mesures brutes (bruit du GPS)
             nuage.forEach(p => { const { sx, sy } = toScreen(p.x, p.y); ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI); ctx.fill(); });
-            ctx.strokeStyle = couleur; ctx.lineWidth = 3; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.shadowColor = couleur; ctx.shadowBlur = 8; ctx.beginPath();
+            ctx.globalAlpha = 1;
+            ctx.strokeStyle = coul(couleur); ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
             points.forEach((p, i) => { const { sx, sy } = toScreen(p.x, p.y); if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); }); ctx.stroke();
-            ctx.shadowBlur = 0;
-            const depart = toScreen(0, 0); ctx.fillStyle = '#60a5fa'; ctx.beginPath(); ctx.arc(depart.sx, depart.sy, 5, 0, 2 * Math.PI); ctx.fill();
-            const pos = toScreen(courant.x, courant.y); ctx.fillStyle = '#fbbf24';
+            const depart = toScreen(0, 0); ctx.fillStyle = coul('bleu'); ctx.beginPath(); ctx.arc(depart.sx, depart.sy, 5, 0, 2 * Math.PI); ctx.fill();
+            const pos = toScreen(courant.x, courant.y); ctx.fillStyle = coul('orange');
             if (headingRad === null) { ctx.beginPath(); ctx.arc(pos.sx, pos.sy, 7, 0, 2 * Math.PI); ctx.fill(); }
             else { ctx.save(); ctx.translate(pos.sx, pos.sy); ctx.rotate(-headingRad); ctx.beginPath(); ctx.moveTo(13, 0); ctx.lineTo(-8, 8); ctx.lineTo(-4, 0); ctx.lineTo(-8, -8); ctx.closePath(); ctx.fill(); ctx.restore(); }
-            ctx.fillStyle = '#5d6490'; ctx.font = '13px system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+            ctx.fillStyle = coul('discret'); ctx.font = '16px "Segoe UI", system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
             ctx.fillText(`grille : ${pas} m`, 10, h - 8);
         }
 
@@ -1220,7 +1241,7 @@
         function dessinerTrace() {
             traceADessiner = false;
             if (traceCanvas.offsetParent === null) return; // onglet caché
-            dessinerChemin(traceCanvas, chemin, { x: posX, y: posY }, heading, '#34d399');
+            dessinerChemin(traceCanvas, chemin, { x: posX, y: posY }, heading, 'vert');
             $('trace-scale-label').textContent = `Position : (${posX.toFixed(2)}, ${posY.toFixed(2)}) m — cap ${((heading*180/Math.PI)%360).toFixed(0)}°`;
         }
         setInterval(() => { if (traceADessiner) dessinerTrace(); }, 100);
@@ -1229,12 +1250,12 @@
         function dessinerTraceGPS() {
             if (traceGpsCanvas.offsetParent === null) return;
             if (!gpsOrigine) {
-                dessinerChemin(traceGpsCanvas, [], { x: 0, y: 0 }, null, '#a3e635');
+                dessinerChemin(traceGpsCanvas, [], { x: 0, y: 0 }, null, 'vert');
                 $('trace-gps-label').textContent = 'En attente d’une position GPS...';
                 return;
             }
             const c = gpsCourant || gpsDernier;
-            dessinerChemin(traceGpsCanvas, gpsChemin, c, gpsCapRad, '#a3e635', gpsNuage);
+            dessinerChemin(traceGpsCanvas, gpsChemin, c, gpsCapRad, 'vert', gpsNuage);
             $('trace-gps-label').textContent = `Départ : ${gpsOrigine.lat.toFixed(6)}, ${gpsOrigine.lon.toFixed(6)} — écart : ${c.x.toFixed(1)} m (est), ${c.y.toFixed(1)} m (nord) — parcouru : ${gpsDistance.toFixed(1)} m`;
         }
 
@@ -1334,6 +1355,248 @@
             afficherTelemetrie(vitesseActuelleRoueG, vitesseActuelleRoueD, distanceTotale, tensionPack, socPack, etatBMS, courantPack, consommationTotale, dt);
             mettreAJourPosition(vitesseActuelleRoueG, vitesseActuelleRoueD, dt);
         }, INTERVALLE_BOUCLE_MS);
+
+        // ==================== SESSIONS (journal enregistré par le robot) ====================
+        // Mêmes règles de calcul que tools/sessions.py, pour que l'IHM et la base de données donnent les mêmes chiffres.
+        const COLONNES_SESSION = ['t','lat','lon','fix','sats','hdop','vitesse_kmh','batterie_v','courant_a','conso_ah','pwr_g','pwr_d','pilote','ihm','manette','rssi_min'];
+        let sessionAffichee = null, lienCsvSession = null;
+
+        function formaterDuree(s) {
+            s = Math.max(0, Math.round(s));
+            const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), sec = s % 60;
+            if (h) return `${h} h ${String(m).padStart(2, '0')}`;
+            if (m) return `${m} min ${String(sec).padStart(2, '0')}`;
+            return `${sec} s`;
+        }
+        function formaterDate(epoch) {
+            if (!epoch) return '';
+            return new Date(epoch * 1000).toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+        }
+        function formaterTaille(o) { return o < 1024 ? `${o} o` : o < 1048576 ? `${(o / 1024).toFixed(0)} Ko` : `${(o / 1048576).toFixed(1)} Mo`; }
+        function echapper(t) { return String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+        function lireCsvSession(texte) {
+            const infos = { numero: null, cause: '', carte: '', horloge: null }, mesures = [], evenements = [];
+            let colonnes = COLONNES_SESSION;
+            for (const ligne of texte.split(/\r?\n/)) {
+                if (!ligne.trim()) continue;
+                const c = ligne.split(',');
+                if (ligne.startsWith('#session')) { infos.numero = parseInt(c[1]); infos.cause = c[2] || ''; infos.carte = c[3] || ''; }
+                else if (ligne.startsWith('#horloge')) infos.horloge = [parseInt(c[1]), parseInt(c[2])];
+                else if (ligne.startsWith('#ev')) evenements.push({ t: parseInt(c[1]), code: c[2], texte: c.slice(3).join(',') });
+                else if (ligne.startsWith('t,')) colonnes = c;
+                else if (ligne[0] >= '0' && ligne[0] <= '9') {
+                    const m = {};
+                    colonnes.forEach((nom, i) => {
+                        const v = c[i];
+                        m[nom] = (v === undefined || v === '') ? null : nom === 'pilote' ? v : (isFinite(Number(v)) ? Number(v) : null);
+                    });
+                    mesures.push(m);
+                }
+            }
+            return { infos, mesures, evenements };
+        }
+
+        function distanceGps(lat1, lon1, lat2, lon2) {
+            const dy = (lat1 - lat2) * 110540, dx = (lon1 - lon2) * 111320 * Math.cos(lat2 * Math.PI / 180);
+            return Math.hypot(dx, dy);
+        }
+
+        function recapituler({ infos, mesures, evenements }) {
+            const r = { duree: 0, distance: 0, vitesseMax: 0, battDebut: null, battFin: null, battMin: null, conso: 0,
+                        conduite: 0, conduiteManette: 0, conduiteIhm: 0, fixPourcent: 0, satsMax: 0, debut: null, trajet: [] };
+            if (mesures.length) r.duree = mesures[mesures.length - 1].t - mesures[0].t;
+            const batt = mesures.map(m => m.batterie_v).filter(v => v !== null && v >= 2);
+            if (batt.length) { r.battDebut = batt[0]; r.battFin = batt[batt.length - 1]; r.battMin = Math.min(...batt); }
+            const consos = mesures.map(m => m.conso_ah).filter(v => v !== null);
+            if (consos.length) r.conso = Math.max(0, consos[consos.length - 1] - consos[0]);
+            let tempsTotal = 0, tempsFix = 0, dernier = null;
+            mesures.forEach((m, i) => {
+                r.satsMax = Math.max(r.satsMax, m.sats || 0);
+                if (m.fix && m.lat !== null && m.lon !== null) {
+                    r.vitesseMax = Math.max(r.vitesseMax, m.vitesse_kmh || 0);
+                    if (!dernier) { dernier = m; r.trajet.push(m); }
+                    else {
+                        const d = distanceGps(m.lat, m.lon, dernier.lat, dernier.lon);
+                        if (d > 2) { r.distance += d; dernier = m; r.trajet.push(m); } // en dessous de 2 m : bruit du GPS
+                    }
+                }
+                if (i + 1 < mesures.length) {
+                    const dt = mesures[i + 1].t - m.t;
+                    if (dt > 0 && dt <= 10) { // au-delà : trou dans l'enregistrement
+                        tempsTotal += dt;
+                        if (m.fix) tempsFix += dt;
+                        if ((m.pwr_g || 0) !== 0 || (m.pwr_d || 0) !== 0) {
+                            r.conduite += dt;
+                            if (m.pilote === 'M') r.conduiteManette += dt; else if (m.pilote === 'I') r.conduiteIhm += dt;
+                        }
+                    }
+                }
+            });
+            r.fixPourcent = tempsTotal ? Math.round(1000 * tempsFix / tempsTotal) / 10 : 0;
+            r.urgences = evenements.filter(e => e.code === 'urgence').length;
+            r.coupuresIhm = evenements.filter(e => e.code === 'ihm-').length;
+            r.coupuresWifi = evenements.filter(e => e.code === 'wifi-').length;
+            if (infos.horloge && mesures.length) r.debut = infos.horloge[0] - infos.horloge[1] + mesures[0].t;
+            return r;
+        }
+
+        function afficherListeSessions(liste) {
+            const corps = $('table-sessions').querySelector('tbody');
+            corps.innerHTML = '';
+            const info = $('sessions-info');
+            if (!liste.disponible) {
+                info.textContent = 'Le robot n’a pas d’espace pour enregistrer. Dans l’Arduino IDE, choisir Outils > Partition Scheme > « Huge APP (3MB No OTA/1MB SPIFFS) » puis téléverser à nouveau.';
+                return;
+            }
+            const libre = liste.total ? Math.round(100 * liste.libre / liste.total) : 0;
+            info.textContent = `${liste.sessions.length} session${liste.sessions.length > 1 ? 's' : ''} dans la mémoire du robot (${libre} % libre, les plus anciennes sont effacées quand elle est pleine).`
+                + (liste.plein ? ' Mémoire pleine : l’enregistrement est arrêté.' : '');
+            liste.sessions.forEach(s => {
+                const tr = document.createElement('tr');
+                const enCours = s.id === liste.enCours;
+                if (sessionAffichee === s.id) tr.className = 'choisie';
+                tr.innerHTML = `<td>${s.id}</td><td>${s.debut ? echapper(formaterDate(s.debut)) : '<span class="petit-texte">heure inconnue</span>'}</td>`
+                    + `<td>${formaterDuree(s.duree)}${enCours ? ' <span class="badge ok">en cours</span>' : ''}</td>`
+                    + `<td class="masquable">${echapper(s.cause)}</td><td class="masquable">${formaterTaille(s.taille)}</td>`
+                    + `<td class="actions"><button class="btn" data-voir="${s.id}">Voir</button>${enCours ? '' : ` <button class="btn" data-suppr="${s.id}">Supprimer</button>`}</td>`;
+                corps.appendChild(tr);
+            });
+            if (!liste.sessions.length) corps.innerHTML = '<tr><td colspan="6" class="petit-texte">Aucune session pour l’instant.</td></tr>';
+        }
+
+        async function chargerSessions() {
+            if (!esp32Url) { $('sessions-info').textContent = 'Se connecter au robot pour voir ses sessions. On peut aussi ouvrir un fichier CSV déjà téléchargé.'; return; }
+            $('sessions-info').textContent = 'Lecture de la liste…';
+            try {
+                const r = await fetch(`${esp32Url}/sessions`, { cache: 'no-store' });
+                if (!r.ok) throw new Error(r.status);
+                afficherListeSessions(await r.json());
+            } catch (e) {
+                $('sessions-info').textContent = 'Le robot n’a pas répondu (ou son programme est trop ancien pour enregistrer les sessions).';
+            }
+        }
+
+        async function voirSession(id) {
+            $('sessions-info').textContent = `Téléchargement de la session ${id}… (le robot s’arrête le temps de l’envoi)`;
+            try {
+                const r = await fetch(`${esp32Url}/session?id=${id}`, { cache: 'no-store' });
+                if (!r.ok) throw new Error(r.status);
+                const texte = await r.text();
+                afficherRecap(texte, `session-${id}.csv`);
+                chargerSessions();
+            } catch (e) { $('sessions-info').textContent = `Impossible de lire la session ${id}.`; }
+        }
+
+        async function supprimerSession(id) {
+            if (!confirm(`Supprimer la session ${id} de la mémoire du robot ?`)) return;
+            try { await fetch(`${esp32Url}/session-supprimer?id=${id}`, { method: 'POST' }); } catch (e) {}
+            if (sessionAffichee === id) $('recap').hidden = true;
+            chargerSessions();
+        }
+
+        function tuile(libelle, valeur, unite = '') {
+            return `<div class="tuile"><div class="libelle">${libelle}</div><div class="kpi-value moyen">${valeur}</div><div class="unite">${unite}</div></div>`;
+        }
+
+        function afficherRecap(texte, nomFichier) {
+            const donnees = lireCsvSession(texte);
+            if (donnees.infos.numero === null) { alert('Ce fichier n’est pas une session du robot.'); return; }
+            const r = recapituler(donnees), { infos, mesures, evenements } = donnees;
+            sessionAffichee = infos.numero;
+            $('recap').hidden = false;
+            $('recap-titre').textContent = `Session ${infos.numero}` + (r.debut ? ` · ${formaterDate(r.debut)}` : '');
+
+            if (lienCsvSession) URL.revokeObjectURL(lienCsvSession);
+            lienCsvSession = URL.createObjectURL(new Blob([texte], { type: 'text/csv' }));
+            $('recap-csv').href = lienCsvSession; $('recap-csv').download = nomFichier;
+
+            const v = (x, d = 2) => x === null ? '--' : x.toFixed(d);
+            $('recap-tuiles').innerHTML =
+                tuile('Durée', formaterDuree(r.duree)) +
+                tuile('Conduite', formaterDuree(r.conduite), `manette ${formaterDuree(r.conduiteManette)} · IHM ${formaterDuree(r.conduiteIhm)}`) +
+                tuile('Distance GPS', r.distance < 1000 ? r.distance.toFixed(0) : (r.distance / 1000).toFixed(2), r.distance < 1000 ? 'm' : 'km') +
+                tuile('Vitesse max', r.vitesseMax.toFixed(1), 'km/h') +
+                tuile('Batterie', `${v(r.battDebut)} → ${v(r.battFin)}`, `V (minimum ${v(r.battMin)} V)`) +
+                tuile('Consommation', r.conso.toFixed(3), 'Ah') +
+                tuile('Position GPS', `${r.fixPourcent} %`, `du temps · jusqu’à ${r.satsMax} satellites`) +
+                tuile('Incidents', `${r.urgences} / ${r.coupuresIhm} / ${r.coupuresWifi}`, 'arrêts d’urgence / coupures IHM / WiFi');
+
+            // Trajet : coordonnées en mètres autour du premier point
+            const canvasTrajet = $('recap-trajet');
+            if (r.trajet.length) {
+                const o = r.trajet[0], kx = 111320 * Math.cos(o.lat * Math.PI / 180);
+                const pts = r.trajet.map(m => ({ x: (m.lon - o.lon) * kx, y: (m.lat - o.lat) * 110540 }));
+                dessinerChemin(canvasTrajet, pts, pts[pts.length - 1], null, 'vert');
+                $('recap-trajet-info').textContent = `Départ ${o.lat.toFixed(6)}, ${o.lon.toFixed(6)} · ${r.trajet.length} points retenus`;
+            } else {
+                dessinerChemin(canvasTrajet, [], { x: 0, y: 0 }, null, 'vert');
+                $('recap-trajet-info').textContent = 'Pas de position GPS pendant cette session.';
+            }
+
+            dessinerCourbe($('recap-batterie'), mesures.filter(m => m.batterie_v !== null && m.batterie_v >= 2).map(m => ({ t: m.t, v: m.batterie_v })), 'bleu', 'V');
+            $('recap-batterie-info').textContent = r.battDebut === null ? 'Pas de mesure de batterie.' : `${mesures.length} mesures · carte ${infos.carte || '?'} · démarrage : ${infos.cause || '?'}`;
+
+            const corps = $('recap-evenements').querySelector('tbody');
+            corps.innerHTML = evenements.length ? '' : '<tr><td class="petit-texte">Aucun événement.</td></tr>';
+            const t0 = mesures.length ? mesures[0].t : 0;
+            evenements.forEach(e => {
+                const heure = infos.horloge ? new Date((infos.horloge[0] - infos.horloge[1] + e.t) * 1000).toLocaleTimeString('fr-FR') : '';
+                const tr = document.createElement('tr');
+                tr.innerHTML = `<td style="white-space:nowrap">${heure || '+' + formaterDuree(e.t - t0)}</td><td>${echapper(e.texte)}</td>`;
+                corps.appendChild(tr);
+            });
+            document.querySelectorAll('#table-sessions tbody tr').forEach(tr => tr.classList.toggle('choisie', tr.querySelector(`[data-voir="${infos.numero}"]`) !== null));
+            $('recap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        // Courbe simple (temps en abscisse) pour le récapitulatif
+        function dessinerCourbe(canvas, points, couleur, unite) {
+            const ctx = canvas.getContext('2d'), w = canvas.width, h = canvas.height;
+            ctx.fillStyle = coul('trace-fond'); ctx.fillRect(0, 0, w, h);
+            ctx.font = '18px "Segoe UI", system-ui, sans-serif'; // le canvas est réduit à l'écran : texte plus grand
+            if (points.length < 2) { ctx.fillStyle = coul('discret'); ctx.textAlign = 'center'; ctx.fillText('Pas assez de mesures', w / 2, h / 2); return; }
+            let min = Math.min(...points.map(p => p.v)), max = Math.max(...points.map(p => p.v));
+            if (max - min < 0.2) { min -= 0.1; max += 0.1; }
+            const g = 92, d = 16, haut = 16, bas = 40, t0 = points[0].t, t1 = points[points.length - 1].t;
+            const x = t => g + (w - g - d) * (t - t0) / Math.max(1, t1 - t0);
+            const y = v => haut + (h - haut - bas) * (1 - (v - min) / (max - min));
+            ctx.lineWidth = 1; ctx.textBaseline = 'middle';
+            for (let i = 0; i <= 4; i++) {
+                const val = min + (max - min) * i / 4, py = Math.round(y(val)) + 0.5;
+                ctx.strokeStyle = coul('grille'); ctx.beginPath(); ctx.moveTo(g, py); ctx.lineTo(w - d, py); ctx.stroke();
+                ctx.fillStyle = coul('discret'); ctx.textAlign = 'right'; ctx.fillText(val.toFixed(2) + ' ' + unite, g - 6, py);
+            }
+            ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+            for (let i = 0; i <= 4; i++) {
+                ctx.textAlign = i === 0 ? 'left' : i === 4 ? 'right' : 'center';
+                ctx.fillText(formaterDuree((t1 - t0) * i / 4), x(t0 + (t1 - t0) * i / 4), h - 12);
+            }
+            ctx.strokeStyle = coul(couleur); ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.beginPath();
+            points.forEach((p, i) => i ? ctx.lineTo(x(p.t), y(p.v)) : ctx.moveTo(x(p.t), y(p.v)));
+            ctx.stroke();
+        }
+
+        $('btn-sessions-actualiser').addEventListener('click', chargerSessions);
+        $('recap-fermer').addEventListener('click', () => { $('recap').hidden = true; sessionAffichee = null; document.querySelectorAll('#table-sessions tr.choisie').forEach(tr => tr.classList.remove('choisie')); });
+        $('table-sessions').addEventListener('click', e => {
+            const b = e.target.closest('button');
+            if (!b) return;
+            if (b.dataset.voir) voirSession(parseInt(b.dataset.voir));
+            if (b.dataset.suppr) supprimerSession(parseInt(b.dataset.suppr));
+        });
+        $('fichier-session').addEventListener('change', async e => {
+            const f = e.target.files[0];
+            if (f) afficherRecap(await f.text(), f.name);
+            e.target.value = '';
+        });
+
+        // Donne l'heure du PC au robot (il n'a pas d'horloge) pour dater la session
+        function envoyerHeure() {
+            const e = Math.floor(Date.now() / 1000);
+            if (transport === 'ws' && wsSocket?.readyState === WebSocket.OPEN) wsSocket.send(`h,${e}`);
+            else if (esp32Url) fetchAvecTimeout(`${esp32Url}/heure?e=${e}`).catch(() => {});
+        }
 
         // ==================== DÉMARRAGE ====================
         // Si la page est servie par le robot (http://192.168.4.1), on se connecte tout seul.
