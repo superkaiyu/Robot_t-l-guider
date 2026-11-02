@@ -638,7 +638,11 @@
         const TOUCHES_AZERTY = { z: 'av', q: 'g' }; // e.code suit la position QWERTY : on accepte aussi les lettres AZERTY
         function toucheVersAction(e) { return TOUCHES[e.code] || TOUCHES_AZERTY[e.key?.toLowerCase()]; }
         window.addEventListener('keydown', e => {
-            if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
+            if (e.target.tagName === 'INPUT' && e.target.type === 'text') {
+                // Dans le champ d'adresse, ↑ ↓ et Échap rendent le clavier au pilotage
+                if (e.code === 'Escape' || e.code === 'ArrowUp' || e.code === 'ArrowDown') e.target.blur();
+                if (e.code !== 'ArrowUp' && e.code !== 'ArrowDown') return;
+            }
             if (e.code === 'Space') { e.preventDefault(); envoyerArretUrgence(); return; }
             if (e.key === '+' || e.key === '-' || e.code === 'NumpadAdd' || e.code === 'NumpadSubtract') {
                 const plus = e.key === '+' || e.code === 'NumpadAdd';
@@ -649,7 +653,10 @@
             const a = toucheVersAction(e);
             if (a) { e.preventDefault(); if (!touches.has(a)) { touches.add(a); afficherTouches(); boucleCommande(); } }
         });
-        window.addEventListener('keyup', e => { const a = toucheVersAction(e); if (a) { touches.delete(a); afficherTouches(); boucleCommande(); } });
+        window.addEventListener('keyup', e => {
+            if (e.code === 'Space' && e.target.tagName === 'BUTTON') e.preventDefault(); // Espace = arrêt, jamais un clic
+            const a = toucheVersAction(e); if (a) { touches.delete(a); afficherTouches(); boucleCommande(); }
+        });
         window.addEventListener('blur', () => { touches.clear(); afficherTouches(); relacherJoystick(); });
         function afficherTouches() { document.querySelectorAll('kbd[data-touche]').forEach(k => k.classList.toggle('appuyee', touches.has(k.dataset.touche))); }
 
@@ -1174,6 +1181,9 @@
             derniereCmdEnvoyee = null; wsEchecs = 0; transport = null;
             dernierUptime = null; liaisonInstable = false; liaisonPerdue = false; document.body.classList.remove('instable');
             setEsp32Status('warn', 'connexion…');
+            // Le curseur ne doit pas rester dans le champ d'adresse : sinon les flèches ne pilotent pas
+            // et Espace "cliquerait" le bouton Déconnecter au lieu de faire l'arrêt d'urgence.
+            document.activeElement?.blur?.();
             $('btn-connect-esp32').textContent = 'Annuler';
             ouvrirWebSocket();
         }
