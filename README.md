@@ -131,7 +131,8 @@ Ce qu'on doit voir :
 
 ## L'IHM
 
-- **Joystick virtuel** à glisser (souris ou doigt), **clavier** (flèches ou ZQSD, *Espace* = arrêt d'urgence), ou **manette USB** branchée au PC.
+- **Piloter depuis le PC** : PC connecté au WiFi `ROBOT_ESP32`, page http://192.168.4.1, puis **joystick virtuel** à glisser à la souris (ou au doigt sur téléphone), **clavier** (flèches ou ZQSD, les touches s'allument ; `+` / `−` pour la puissance ; *Espace* = arrêt d'urgence), ou **manette USB** branchée au PC. Si le robot ne suit pas, une ligne orange sous le joystick dit pourquoi (mode démo, pas de liaison, manette prioritaire, arrêt d'urgence).
+- **Démarrage progressif des moteurs** : la puissance monte en 250 ms au lieu d'un coup, pour éviter la chute de tension qui faisait redémarrer l'ESP32. S'arrêter reste immédiat.
 - **Barres Roue G / Roue D** : la puissance réellement appliquée par le robot (pas seulement celle demandée).
 - **Qui pilote** : IHM, ESP32 Manette ou arrêt d'urgence, en direct.
 - Onglets **Vue d'ensemble**, **GPS** (position, signal de chaque satellite et carte du ciel, trajet, liens OpenStreetMap / Google Maps), **Batterie**, **Roues**, **Système** (diagnostic des coupures et des redémarrages), **Sessions** (récapitulatif de chaque session, voir plus bas).
@@ -230,6 +231,19 @@ Ce qui améliore la précision :
 6. **Robot immobile** : la position est moyennée pendant 60 s, en donnant plus de poids aux mesures précises (HDOP faible, beaucoup de satellites).
 
 Même dans de bonnes conditions, un module GPS d'entrée de gamme reste précis à **2 à 5 m** environ.
+
+### Pourquoi le tracé partait à 100 m alors que le GPS ne bougeait pas
+
+Avec des signaux sous 25 dB-Hz (tout en rouge dans l'onglet), le module calcule quand même une position et annonce un HDOP correct, mais cette position peut être fausse de 50 à 150 m et se promener. Ajoute à cela les premières positions après l'allumage (souvent très fausses) et les redémarrages du robot, et on obtient de grandes lignes droites sur le tracé. Le filtre du robot (`robot/gps_filtre.h`) fait maintenant :
+
+- **au démarrage**, il attend que 10 mesures de suite soient d'accord entre elles (60 s au plus) et garde leur médiane (badge « stabilisation ») ;
+- **signal faible** (moins de 4 satellites à 25 dB-Hz ou plus) : position figée tant que les moteurs ne tournent pas, précision affichée « ± 25 m (signal faible) » ;
+- **sauts impossibles** : une mesure plus loin que ce qu'on peut parcourir à 3 m/s est ignorée. Si 10 mesures de suite sont ignorées et d'accord entre elles, le robot a vraiment été déplacé et on repart de là ;
+- **porté à la main** : reconnu seulement si les mesures récentes se sont vraiment éloignées (plus de 8 m) et que le GPS mesure une vitesse.
+
+L'IHM ne relie plus deux points séparés de plus de 30 m, ni l'avant et l'après d'un redémarrage : le trajet est coupé en morceaux au lieu de tracer une grande ligne droite.
+
+**Le vrai remède reste le ciel dégagé** : dehors, loin des murs, antenne vers le haut. Aucun filtre ne peut retrouver la bonne position à partir de signaux trop faibles ; il peut seulement éviter d'afficher n'importe quoi.
 
 ## Coupures WiFi : trouver la cause
 

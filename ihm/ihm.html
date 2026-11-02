@@ -88,7 +88,15 @@
         .reglage { margin-top: 12px; }
         .reglage label { display: flex; justify-content: space-between; font-size: 13px; color: var(--attenue); }
         .reglage label b { color: var(--texte); }
-        input[type="range"] { width: 100%; accent-color: var(--accent); }
+        input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 22px; background: transparent; cursor: pointer; }
+        input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--bord-fort); }
+        input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--bord-fort); }
+        input[type="range"]::-moz-range-progress { height: 4px; border-radius: 2px; background: var(--accent); }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--accent); }
+        input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); border: 2px solid var(--surface); }
+        input[type="range"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+        kbd.appuyee { background: var(--accent); color: var(--surface); border-color: var(--accent); }
+        .raison-pilote { min-height: 16px; font-size: 12px; text-align: center; margin: 6px 0 0; color: var(--orange); }
         .btn-arret { width: 100%; margin-top: 12px; padding: 11px; border: 1px solid var(--rouge); border-radius: 4px; cursor: pointer; font-weight: 700; color: #fff; background: var(--rouge); }
         .btn-arret:hover { filter: brightness(1.08); }
         .btn-arret.flash { outline: 3px solid var(--rouge); outline-offset: 2px; }
@@ -242,7 +250,8 @@
                     <div class="barre-roue"><b class="num" id="val-pwr-d">0</b><div class="barre-fond"><div class="barre-val" id="barre-d"></div></div>droite</div>
                 </div>
             </div>
-            <p class="aide">Souris ou doigt sur le cercle, ou clavier : <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> / <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd>, <kbd>Espace</kbd> pour arrêter</p>
+            <p class="aide">Depuis ce PC : souris sur le cercle, ou clavier <kbd data-touche="av">↑</kbd><kbd data-touche="ar">↓</kbd><kbd data-touche="g">←</kbd><kbd data-touche="d">→</kbd> (ou <kbd>Z</kbd><kbd>Q</kbd><kbd>S</kbd><kbd>D</kbd>), <kbd>+</kbd> <kbd>−</kbd> pour la puissance, <kbd>Espace</kbd> pour arrêter</p>
+            <p class="raison-pilote" id="raison-pilote"></p>
 
             <div class="reglage">
                 <label for="slider-speed">Puissance max <b><span id="label-speed">50</span> %</b></label>
@@ -378,7 +387,7 @@
                     <div class="section-titre"><h2>Trajet</h2><button class="btn" id="btn-reset-trace-gps">Effacer</button></div>
                     <canvas id="traceGpsCanvas" class="trace-canvas" width="900" height="420"></canvas>
                     <div class="trace-scale-label num" id="trace-gps-label">pas encore de position</div>
-                    <div class="trace-scale-label">trait : trajet filtré par le robot · points : mesures brutes (elles bougent toujours de quelques mètres)</div>
+                    <div class="trace-scale-label">trait : trajet filtré par le robot · points : mesures brutes (quelques mètres de bruit dehors, des dizaines de mètres avec un signal faible)</div>
                 </div>
             </div>
 
@@ -631,11 +640,18 @@
         window.addEventListener('keydown', e => {
             if (e.target.tagName === 'INPUT' && e.target.type === 'text') return;
             if (e.code === 'Space') { e.preventDefault(); envoyerArretUrgence(); return; }
+            if (e.key === '+' || e.key === '-' || e.code === 'NumpadAdd' || e.code === 'NumpadSubtract') {
+                const plus = e.key === '+' || e.code === 'NumpadAdd';
+                sliderSpeed.value = Math.max(10, Math.min(100, parseInt(sliderSpeed.value) + (plus ? 10 : -10)));
+                sliderSpeed.dispatchEvent(new Event('input'));
+                e.preventDefault(); return;
+            }
             const a = toucheVersAction(e);
-            if (a) { e.preventDefault(); if (!touches.has(a)) { touches.add(a); boucleCommande(); } }
+            if (a) { e.preventDefault(); if (!touches.has(a)) { touches.add(a); afficherTouches(); boucleCommande(); } }
         });
-        window.addEventListener('keyup', e => { const a = toucheVersAction(e); if (a) { touches.delete(a); boucleCommande(); } });
-        window.addEventListener('blur', () => { touches.clear(); relacherJoystick(); });
+        window.addEventListener('keyup', e => { const a = toucheVersAction(e); if (a) { touches.delete(a); afficherTouches(); boucleCommande(); } });
+        window.addEventListener('blur', () => { touches.clear(); afficherTouches(); relacherJoystick(); });
+        function afficherTouches() { document.querySelectorAll('kbd[data-touche]').forEach(k => k.classList.toggle('appuyee', touches.has(k.dataset.touche))); }
 
         // ==================== AFFICHAGE : JOYSTICKS, LIAISONS, PILOTE ====================
         function placerPoint(el, x, y) {
@@ -689,7 +705,7 @@
                 if (data.carte) { t = `${data.carte} · ` + t; $('label-carte').textContent = `${data.carte} · roues · GPS · WiFi`; }
                 $('reseau-info').textContent = t;
             }
-            if (data.pilote !== undefined) afficherPilote(data.pilote);
+            if (data.pilote !== undefined) { afficherPilote(data.pilote); piloteRobot = data.pilote; }
             if (data.pwrRoueG !== undefined) afficherBarresRoues(Number(data.pwrRoueG) || 0, Number(data.pwrRoueD) || 0);
             if (data.uptime !== undefined) {
                 // Le robot a redémarré si son temps de fonctionnement repart en arrière
@@ -697,13 +713,33 @@
                     redemarragesVus++;
                     const cause = data.causeDemarrage || 'inconnue';
                     let texte = `Le robot vient de redémarrer (${cause}).`;
-                    if (/tension/.test(cause)) texte += ' L\u2019alimentation ne suit pas : voir l\u2019onglet Système.';
+                    if (/chute/.test(cause)) texte += ' L\u2019alimentation ne suit pas : voir l\u2019onglet Système.';
+                    else if (/mise sous tension/.test(cause)) texte += ' Le courant a été complètement coupé (batterie débranchée, ou batterie externe qui s\u2019est éteinte toute seule).';
                     else texte += ' La liaison a été coupée et le GPS doit retrouver ses satellites.';
+                    gpsCoupure = true; // le tracé GPS ne relie pas l'avant et l'après redémarrage
                     afficherBandeau(texte);
                 }
                 dernierUptime = data.uptime;
             }
             dernieresDonnees = data;
+        }
+
+        // Explique pourquoi le robot ne suit pas ce qu'on demande depuis ce PC
+        let piloteRobot = null, demandeDepuisMs = 0;
+        function expliquerPilotage(demande) {
+            const el = $('raison-pilote');
+            const maintenant = performance.now();
+            if (!demande) { demandeDepuisMs = 0; el.textContent = ''; return; }
+            if (!demandeDepuisMs) demandeDepuisMs = maintenant;
+            let t = '';
+            if (!esp32Url) t = 'Mode démo : cliquer sur « Se connecter » en haut pour piloter le vrai robot.';
+            else if (!httpConnecte) t = 'Pas de liaison avec le robot : la commande n’arrive pas.';
+            else if (maintenant - demandeDepuisMs > 600) {
+                if (piloteRobot === 'manette') t = 'La manette a la priorité tant que son joystick n’est pas au centre.';
+                else if (piloteRobot === 'arret-urgence') t = 'Arrêt d’urgence en cours (bouton de la manette appuyé ?).';
+                else if (piloteRobot === 'aucun' || piloteRobot === null) t = 'Le robot ne reçoit pas la commande (liaison WiFi ?).';
+            }
+            el.textContent = t;
         }
 
         function afficherBandeau(texte) { $('bandeau-texte').textContent = texte; $('bandeau-alerte').classList.add('visible'); }
@@ -831,6 +867,8 @@
                             note: 'Le robot cherche sur quelle broche et à quelle vitesse arrivent les données du GPS. Ça prend quelques secondes.' },
             'fix':        { badge: 'position trouvée', classe: 'ok', dot: 'ok',
                             note: 'Position lue par le robot sur le module GPS.' },
+            'stabilisation': { badge: 'stabilisation', classe: 'attention', dot: 'warn',
+                            note: 'Premières positions après l\u2019allumage : elles sont souvent fausses de plusieurs dizaines de mètres. Le robot attend que 10 mesures de suite soient d\u2019accord avant d\u2019afficher la position.' },
             'simulation': { badge: 'simulation', classe: 'info', dot: 'ok',
                             note: 'Position inventée par le robot (GPS_SIMULATION = 1 dans robot.ino), pour tester sans le module.' },
             'recherche':  { badge: 'recherche des satellites', classe: 'attention', dot: 'warn',
@@ -842,6 +880,7 @@
         };
 
         let gpsOrigine = null, gpsChemin = [], gpsDernier = null, gpsCourant = null, gpsNuage = [], gpsDistance = 0, gpsCapRad = null;
+        let gpsCoupure = false, gpsSautsVus = null;
         const MAX_POINTS_NUAGE = 120; // 2 dernières minutes de mesures brutes
         let carteDernierePos = null, gpsDernierEtatAffiche = null;
         const MAX_POINTS_GPS = 2000;
@@ -897,12 +936,17 @@
             }
             if (data.gpsImmobile !== undefined) {
                 $('val-gps-mouvement').textContent = !fix ? '—' : data.gpsImmobile
-                    ? (data.gpsFige ? `immobile · position figée (moyenne de ${data.gpsMoyenne} mesures)` : `immobile · moyenne en cours (${data.gpsMoyenne}/30 mesures)`)
+                    ? (data.gpsSignalFaible ? 'immobile · position figée (signal trop faible pour la corriger)'
+                        : data.gpsFige ? `immobile · position figée (moyenne de ${data.gpsMoyenne} mesures)` : `immobile · moyenne en cours (${data.gpsMoyenne}/60 mesures)`)
                     : 'en mouvement';
-                $('val-gps-precision').textContent = fix && data.gpsPrecision ? `± ${Number(data.gpsPrecision).toFixed(0)} m` : '—';
+                $('val-gps-precision').textContent = fix && data.gpsPrecision ? `± ${Number(data.gpsPrecision).toFixed(0)} m${data.gpsSignalFaible ? ' (signal faible)' : ''}` : '—';
             }
             if (fix) {
                 const brute = data.gpsLatBrute !== undefined ? { lat: Number(data.gpsLatBrute), lon: Number(data.gpsLonBrute) } : null;
+                if (data.gpsSauts !== undefined) {
+                    if (gpsSautsVus !== null && data.gpsSauts !== gpsSautsVus) gpsCoupure = true; // le robot a "repris" ailleurs
+                    gpsSautsVus = data.gpsSauts;
+                }
                 ajouterPointGPS(lat, lon, Number(data.gpsVitesseKmh) || 0, Number(data.gpsCap) || 0, data.gpsImmobile, brute);
                 mettreAJourCarte(lat, lon);
             }
@@ -928,16 +972,21 @@
             gpsCourant = p;
             // Ancien firmware (sans filtre) : seuil plus large pour ne pas dessiner le bruit
             const seuil = immobile === undefined ? 5.0 : 2.0;
-            if (!gpsDernier || (immobile !== true && Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y) > seuil)) {
-                if (gpsDernier) gpsDistance += Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y);
-                gpsChemin.push(p); if (gpsChemin.length > MAX_POINTS_GPS) gpsChemin.shift();
-                gpsDernier = p;
+            const ecart = gpsDernier ? Math.hypot(p.x - gpsDernier.x, p.y - gpsDernier.y) : 0;
+            // Plus de 30 m d'un coup (redémarrage, reprise après un signal perdu) : on ne trace pas
+            // de ligne droite, on commence un nouveau morceau de trajet.
+            if (gpsDernier && ecart > 30) gpsCoupure = true;
+            if (!gpsDernier || gpsCoupure || (immobile !== true && ecart > seuil)) {
+                if (gpsDernier && !gpsCoupure) gpsDistance += ecart;
+                gpsChemin.push(gpsCoupure ? { x: p.x, y: p.y, coupure: true } : p);
+                if (gpsChemin.length > MAX_POINTS_GPS) gpsChemin.shift();
+                gpsDernier = p; gpsCoupure = false;
             }
             gpsCapRad = immobile !== true && vitesseKmh > 2 ? (90 - capDeg) * Math.PI / 180 : null; // cap GPS : 0° = nord, sens horaire
             dessinerTraceGPS();
         }
 
-        function reinitialiserTraceGPS() { gpsOrigine = null; gpsChemin = []; gpsDernier = null; gpsCourant = null; gpsNuage = []; gpsDistance = 0; gpsCapRad = null; dessinerTraceGPS(); }
+        function reinitialiserTraceGPS() { gpsCoupure = false; gpsOrigine = null; gpsChemin = []; gpsDernier = null; gpsCourant = null; gpsNuage = []; gpsDistance = 0; gpsCapRad = null; dessinerTraceGPS(); }
         $('btn-reset-trace-gps').addEventListener('click', reinitialiserTraceGPS);
 
         const chkCarte = $('chk-carte'), gpsCarte = $('gps-carte');
@@ -1217,7 +1266,7 @@
             nuage.forEach(p => { const { sx, sy } = toScreen(p.x, p.y); ctx.beginPath(); ctx.arc(sx, sy, 2.5, 0, 2 * Math.PI); ctx.fill(); });
             ctx.globalAlpha = 1;
             ctx.strokeStyle = coul(couleur); ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.beginPath();
-            points.forEach((p, i) => { const { sx, sy } = toScreen(p.x, p.y); if (i === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); }); ctx.stroke();
+            points.forEach((p, i) => { const { sx, sy } = toScreen(p.x, p.y); if (i === 0 || p.coupure) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy); }); ctx.stroke();
             const depart = toScreen(0, 0); ctx.fillStyle = coul('bleu'); ctx.beginPath(); ctx.arc(depart.sx, depart.sy, 5, 0, 2 * Math.PI); ctx.fill();
             const pos = toScreen(courant.x, courant.y); ctx.fillStyle = coul('orange');
             if (headingRad === null) { ctx.beginPath(); ctx.arc(pos.sx, pos.sy, 7, 0, 2 * Math.PI); ctx.fill(); }
@@ -1315,6 +1364,7 @@
             if (reflet) afficherJoystickVirtuel(tourne, -avance); else afficherJoystickVirtuel(joyX, joyY);
             const pwrRoueG = Math.round(Math.max(-1,Math.min(1, avance+tourne))*puissanceMax);
             const pwrRoueD = Math.round(Math.max(-1,Math.min(1, avance-tourne))*puissanceMax);
+            expliquerPilotage(pwrRoueG !== 0 || pwrRoueD !== 0);
             $('json-out').textContent = transport === 'http' ? `/cmd?src=ihm&rg=${pwrRoueG}&rd=${pwrRoueD}` : `c,${pwrRoueG},${pwrRoueD}`;
 
             if (esp32Url) {

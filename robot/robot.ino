@@ -449,6 +449,18 @@ bool arretUrgenceActif() {
   return arretUrgenceDureeMs > 0 && millis() - arretUrgenceDebutMs < arretUrgenceDureeMs;
 }
 
+// Démarrage progressif : la puissance monte de 0 à 100 % en 250 ms au lieu d'un coup.
+// Un moteur qui démarre d'un coup tire un gros courant, la tension de la batterie
+// chute et l'ESP32 peut redémarrer. Ralentir et s'arrêter restent immédiats (sécurité).
+const float RAMPE_POURCENT_PAR_MS = 0.4f;
+int rampe(int actuel, int cible, int pas) {
+  if (cible == 0) return 0;
+  if (actuel != 0 && (cible > 0) != (actuel > 0)) return 0; // changement de sens : on passe par 0
+  if (abs(cible) <= abs(actuel)) return cible;                // ralentir : tout de suite
+  int v = cible > 0 ? actuel + pas : actuel - pas;
+  return abs(v) > abs(cible) ? cible : v;
+}
+
 // Appelée à chaque tour de loop() et à chaque commande reçue : choisit la source
 // prioritaire encore "fraîche" et coupe les moteurs si plus personne ne pilote.
 void mettreAJourPilotage() {
@@ -472,6 +484,12 @@ void mettreAJourPilotage() {
     else if (source == PILOTE_MANETTE) noterEvenement("pilote", "Pilotage par la manette");
     else if (source == PILOTE_IHM) noterEvenement("pilote", "Pilotage depuis l'IHM");
   }
+  static unsigned long derniereRampeMs = 0;
+  unsigned long dt = millis() - derniereRampeMs;
+  int pas = 0;
+  if (dt >= 5) { pas = (int)((dt > 20 ? 20 : dt) * RAMPE_POURCENT_PAR_MS); derniereRampeMs = millis(); }
+  g = rampe(dernierPwrRoueG, g, pas);
+  d = rampe(dernierPwrRoueD, d, pas);
   if (g != dernierPwrRoueG || d != dernierPwrRoueD) appliquerCommandes(g, d);
 }
 
@@ -679,7 +697,8 @@ void lireGPS() {
   if (fixBrut && gps.location.isUpdated()) { // nouvelle mesure (1 par seconde en général) -> filtre
     filtreGps.ajouter(gps.location.lat(), gps.location.lng(), gps.hdop.isValid() ? gps.hdop.hdop() : 99.0f,
                       gps.satellites.isValid() ? (int)gps.satellites.value() : 0,
-                      gps.speed.isValid() ? gps.speed.kmph() : 0.0f, robotEnMouvement());
+                      satellitesGps.nombre() > 0 ? satellitesGps.nombreAvecSignal(25) : -1, // -1 : signal inconnu
+                      gps.speed.isValid() ? gps.speed.kmph() : 0.0f, robotEnMouvement(), millis());
   }
   gpsFixValide = fixBrut && filtreGps.pret();
   if (gpsFixValide) {
@@ -703,6 +722,7 @@ void lireGPS() {
   else if (!trouve) gpsEtat = gpsDernierResultatIllisible ? "illisible" : "absent";
   else if (!moduleQuiParle) gpsEtat = "absent";
   else if (gpsFixValide) gpsEtat = "fix";
+  else if (fixBrut && filtreGps.enDemarrage()) gpsEtat = "stabilisation"; // premières positions, pas encore fiables
   else gpsEtat = "recherche";
 #endif
 }
@@ -797,6 +817,9 @@ void ajouterChampsGPS(String& t) {
   jsonChampInt(t, "gpsMoyenne", filtreGps.mesuresMoyennees());
   jsonChampBool(t, "gpsFige", filtreGps.fige());
   jsonChamp(t, "gpsPrecision", filtreGps.pret() ? filtreGps.precisionM() : 0, 1);
+  jsonChampBool(t, "gpsSignalFaible", filtreGps.signalFaible());
+  jsonChampInt(t, "gpsSauts", filtreGps.sauts());
+  jsonChampInt(t, "gpsDemarrage", filtreGps.mesuresDemarrage());
   jsonChampInt(t, "gpsSatellites", gpsSatellites);
   jsonChampInt(t, "gpsSatellitesVisibles", gpsSatellitesVisibles);
   jsonChamp(t, "gpsAltitude", gpsAltitude, 1);
