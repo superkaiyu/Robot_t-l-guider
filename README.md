@@ -56,13 +56,51 @@ Alimentation : **GND → rail bleu**, **3V3 → rail rouge**, câble USB-C sur l
 | LED de statut | GPIO21 → résistance 220–330 Ω → patte longue de la LED ; patte courte → rail bleu |
 | Tension batterie | Pont diviseur : 30 kΩ entre le **+ batterie** et une rangée libre, 10 kΩ entre cette rangée et le rail bleu. Cette rangée → **GPIO1**. Le + batterie ne touche **jamais** directement un GPIO. |
 | Courant | GPIO2. Sans capteur de courant, relier GPIO2 au rail bleu. |
-| Driver moteur (signaux) | **GPIO15 → AIN1**, **GPIO16 → AIN2** (roue gauche), **GPIO17 → BIN1**, **GPIO18 → BIN2** (roue droite) |
-| Driver : alimentation logique | TB6612FNG : VCC, STBY, PWMA, PWMB → rail rouge. DRV8833 : nSLEEP → rail rouge. |
-| Driver : **masse commune** | GND du driver → rail bleu (sans ce fil, les commandes ne passent pas) |
-| Moteurs | Gauche sur AO1/AO2, droite sur BO1/BO2 |
-| Alimentation moteurs | + de l'alim/batterie → VM du driver, − → GND du driver. Le courant des moteurs passe en fils directs vers le driver, **jamais** par les rails de la breadboard. |
+| Carte moteur L298N | Voir le paragraphe suivant (6 fils sur P3 + la masse commune) |
 
-Une roue tourne à l'envers ? Dans `robot.ino`, passe `INVERSER_ROUE_G` ou `INVERSER_ROUE_D` à `true`. Les moteurs sont pilotés en PWM à 20 kHz, au-delà de l'audible, ce qui supprime le sifflement. Avec un vieux driver L298N, remets `FREQUENCE_PWM_MOTEURS` à 1000.
+Une roue tourne à l'envers ? Dans `robot.ino`, passe `INVERSER_ROUE_G` ou `INVERSER_ROUE_D` à `true`.
+
+### Carte de commande moteur L298N (GEII Angoulême, module R1)
+
+C'est la carte du robot (`#define DRIVER_L298 1` dans `robot.ino`). Le L298N contient deux ponts en H : **M1 = roue gauche** (sortie P2 « Moteur1 »), **M2 = roue droite** (sortie P4 « Moteur2 »). Pour chaque moteur, **EN** reçoit la PWM (la vitesse) et **I1 / I2** donnent le sens, comme dans la table de vérité du L298 :
+
+| EN | I1 | I2 | Moteur |
+|---|---|---|---|
+| PWM | 1 | 0 | avant |
+| PWM | 0 | 1 | arrière |
+| 0 | x | x | roue libre (arrêt) |
+
+**Connecteur P3 « Commande moteur »** (bornier vert à 6 points, dans l'ordre imprimé sur la carte) :
+
+| Point P3 | Signal | Couleur conseillée | Broche ESP32-S3 |
+|---|---|---|---|
+| I2 (M2) | sens roue droite | vert | **GPIO18** |
+| I1 (M2) | sens roue droite | jaune | **GPIO17** |
+| EN (M2) | vitesse roue droite (PWM) | blanc | **GPIO9** |
+| EN (M1) | vitesse roue gauche (PWM) | blanc | **GPIO8** |
+| I1 (M1) | sens roue gauche | jaune | **GPIO15** |
+| I2 (M1) | sens roue gauche | vert | **GPIO16** |
+
+Sur la DevKitC-1, GPIO15, 16, 17, 18 et 8 sont côte à côte sur le même bord ; GPIO9 est trois broches plus loin (après GPIO3 et GPIO46).
+
+**Connecteur P1 « Alimentation »** (GND · Vcc · GND) :
+
+- **Vcc = 5 à 7 V au maximum, 6 V conseillés.** Sur cette carte, le même Vcc alimente les moteurs (VS) **et** la logique du L298 (VSS, 7 V maximum). La batterie 3S (12 V) ne doit donc **pas** aller directement sur Vcc : passer par un module abaisseur de tension (« buck », type LM2596, au moins 2 A) réglé sur 6 V, ou utiliser 4 piles AA, ou une alimentation de labo à 6 V avec limite de courant.
+- Un GND reçoit le − de l'alimentation, **l'autre GND va au rail bleu de l'ESP32**. P3 n'a pas de masse : sans ce fil, les commandes ne passent pas.
+
+**À savoir :**
+
+- Les entrées du L298 acceptent directement le 3,3 V de l'ESP32 (niveau haut dès 2,3 V) : pas d'adaptateur de niveau.
+- EN est tiré à la masse par 10 kΩ (R1, R4) : un fil EN débranché = moteur arrêté. C'est la première chose à vérifier si un moteur ne tourne pas.
+- Le L298 perd environ 2 V : avec 6 V sur Vcc, le moteur reçoit environ 4 V. En dessous de 25 % de puissance le moteur siffle sans tourner ; le programme saute donc cette zone (`PUISSANCE_MIN_MOTEUR = 25`).
+- PWM à 1 kHz (`FREQUENCE_PWM_MOTEURS`) : le L298 commute lentement et chaufferait plus vite. Le léger sifflement des moteurs est normal.
+- Mesure de batterie : le pont diviseur reste branché sur le + de la batterie 3S (avant le module abaisseur). Avec 4 piles AA à la place, abaisser `SEUIL_SOUS_TENSION_PACK` (vers 4,4 V) et `SEUIL_SURTENSION_PACK` (vers 6,6 V) dans `robot.ino`, sinon l'IHM affiche « SOUS-TENSION » (les moteurs tournent quand même).
+- Les diodes D1 à D8 (1N5819) protègent déjà le L298 des pointes de tension des moteurs.
+- Les résistances R2/R3 et R5/R6 (mesure de courant du L298) ne sortent sur aucun connecteur : sans capteur séparé, relier GPIO2 au GND.
+
+**Pour faire tourner un seul moteur** (premier essai) : P1 (6 V + GND), le fil de masse vers l'ESP32, les 3 fils de M1 (GPIO15 → I1, GPIO16 → I2, GPIO8 → EN) et le moteur sur P2. Robot sur cales, ouvrir le Moniteur Série (115200 bauds) et taper **`t`** : chaque moteur tourne 1,5 s en avant puis 1,5 s en arrière à 60 %. Ensuite, piloter depuis l'IHM.
+
+**Autre driver** : avec un petit TB6612FNG ou DRV8833, mettre `#define DRIVER_L298 0` : GPIO15/16 → AIN1/AIN2 (roue gauche), GPIO17/18 → BIN1/BIN2 (roue droite), PWM à 20 kHz, VCC/STBY/PWMA/PWMB (TB6612) ou nSLEEP (DRV8833) au 3V3.
 
 Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON BRANCHÉE » (pas d'alarme).
 
@@ -74,7 +112,7 @@ Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON B
 - dans l'IHM, onglet **GPS** (« Branché sur : GPIO14 · 9600 bauds »), avec un bouton **Relancer la détection du GPS** ;
 - avec `lister_esp32.bat` : `COM5  ROBOT … GPS : module OK, recherche des satellites — branché sur GPIO14 à 9600 bauds`.
 
-Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection.
+Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection, `t` tester les moteurs un par un.
 
 ### ESP32 Manette : Seeed XIAO ESP32S3
 
@@ -95,7 +133,7 @@ La XIAO se pose à cheval sur la rainure (D0 à D10 sont imprimés sur la carte)
 
 1. Câble le Robot **sans** les moteurs ni la batterie, téléverse-le et vérifie l'IHM sur http://192.168.4.1.
 2. Câble la Manette et vérifie qu'elle se connecte au robot (LED fixe, pastille « ESP32 Manette » verte).
-3. Branche le driver et les moteurs en dernier, avec une alimentation réglée à 6 V et une limite de courant basse.
+3. Branche la carte moteur et les moteurs en dernier, avec une alimentation réglée à 6 V et une limite de courant basse, puis tape `t` dans le Moniteur Série pour les tester.
 
 ## Téléverser les deux ESP32 (un seul port USB du PC)
 
