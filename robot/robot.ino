@@ -149,10 +149,6 @@ uint32_t apDeconnexionsAffichees = 0;
 JournalSession journal;
 const char CODES_PILOTES[] = "-MIU"; // aucun, Manette, IHM, Urgence (même ordre que SourcePilote)
 
-void noterEvenement(const char* code, const String& texte) {
-  journal.evenement(millis() / 1000, code, texte);
-}
-
 // =========================================================
 // BROCHAGE — choisi automatiquement selon la carte sélectionnée dans l'Arduino IDE
 // =========================================================
@@ -347,6 +343,14 @@ enum EtatSTA { STA_INACTIF, STA_CONNEXION, STA_CONNECTE, STA_ABANDON };
 EtatSTA etatSta = STA_INACTIF;
 int reseauStaIndex = -1;
 unsigned long debutConnexionStaMs = 0;
+
+// Note dans le journal de la session un événement horodaté (secondes depuis l'allumage).
+// ATTENTION : aucune fonction ne doit être écrite avant cet endroit. L'Arduino IDE ajoute
+// automatiquement les déclarations des fonctions juste avant la PREMIÈRE fonction du fichier :
+// les types (CommandeSource, SourcePilote, EtatSTA...) doivent donc être déclarés avant.
+void noterEvenement(const char* code, const String& texte) {
+  journal.evenement(millis() / 1000, code, texte);
+}
 
 // =========================================================
 // DIAGNOSTIC : redémarrages et WiFi
