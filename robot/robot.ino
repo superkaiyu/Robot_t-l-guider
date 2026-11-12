@@ -18,19 +18,23 @@
      FILTRE la position (elle ne "bouge" plus quand le robot est à l'arrêt) et la
      diffuse en WiFi à l'IHM et à la Manette.
   3. Reçoit les commandes de déplacement (Manette et/ou IHM) et pilote 2 moteurs DC
-     via la carte de commande moteur L298N du GEII (EN = vitesse, I1/I2 = sens).
-     Un petit driver TB6612FNG / DRV8833 reste possible : DRIVER_L298 à 0.
+     via des modules LMD18200T (un par roue), la carte L298N du GEII ou un petit
+     TB6612FNG / DRV8833 : choisir avec DRIVER_MOTEUR (voir BROCHAGE).
   4. Sert l'IHM directement : ouvrir http://192.168.4.1 dans un navigateur suffit
      (aucun fichier à ouvrir sur le PC, aucune connexion Internet nécessaire).
   5. Mesure la tension batterie (pont diviseur 30 kΩ / 10 kΩ) et le courant.
 
   BROCHAGE ESP32-S3 N16R8 (voir aussi le README) :
+    Moteurs (mêmes broches pour LMD18200 et L298N) :
+      LMD18200 gauche : GPIO15 -> DIR, GPIO16 -> BRAKE, GPIO8 -> PWM
+      LMD18200 droit  : GPIO17 -> DIR, GPIO18 -> BRAKE, GPIO9 -> PWM
+      GND des modules relié au GND de l'ESP32 (masse commune), VS = 12 V (batterie 3S chargée)
     Carte moteur L298N, connecteur P3 "Commande moteur" :
                     M1 (roue gauche, P2) : GPIO15 -> I1, GPIO16 -> I2, GPIO8 -> EN
                     M2 (roue droite, P4) : GPIO17 -> I1, GPIO18 -> I2, GPIO9 -> EN
                     P1 "Alimentation" : Vcc = 5 à 7 V MAXIMUM (le L298 de cette carte prend
                     sa logique sur le même Vcc), GND relié au GND de l'ESP32 (masse commune)
-    (DRIVER_L298 = 0 : GPIO15/16 -> AIN1/AIN2, GPIO17/18 -> BIN1/BIN2 d'un TB6612 ou DRV8833)
+    (DRIVER_TB6612 : GPIO15/16 -> AIN1/AIN2, GPIO17/18 -> BIN1/BIN2 d'un TB6612 ou DRV8833)
     LED statut    : GPIO21 -> résistance 220-330 Ω -> LED -> GND
     Batterie      : GPIO1 = milieu du pont diviseur (30 kΩ vers le + batterie, 10 kΩ vers GND)
     Courant       : GPIO2 (relié au GND s'il n'y a pas de capteur)
@@ -154,11 +158,17 @@ const char CODES_PILOTES[] = "-MIU"; // aucun, Manette, IHM, Urgence (même ordr
 // =========================================================
 typedef DetecteurGps<HardwareSerial>::Broche BrocheGps;
 
-// --- Type de carte moteur ---
-// 1 = carte de commande moteur GEII Angoulême (L298N, connecteur P3) : par moteur, EN reçoit
-//     la PWM (vitesse) et I1 / I2 donnent le sens. C'est la carte du robot.
-// 0 = petit driver TB6612FNG ou DRV8833 : 2 signaux PWM par moteur (AIN1/AIN2, BIN1/BIN2).
-#define DRIVER_L298 1
+// --- Type de carte moteur (choisir avec DRIVER_MOTEUR) ---
+#define DRIVER_TB6612   0  // petit driver TB6612FNG ou DRV8833 : 2 signaux PWM par moteur
+#define DRIVER_L298     1  // carte GEII Angoulême à L298N (bornier P3) : EN = vitesse, I1/I2 = sens
+#define DRIVER_LMD18200 2  // module à LMD18200T (un par moteur) : PWM = vitesse, DIR = sens, BRAKE
+#define DRIVER_MOTEUR DRIVER_LMD18200
+
+// L298N et LMD18200 utilisent 3 fils par moteur, sur les mêmes broches de l'ESP32 :
+//   GPIO15 / GPIO17 : I1 (L298N) ou DIR (LMD18200)      sens
+//   GPIO16 / GPIO18 : I2 (L298N) ou BRAKE (LMD18200)    sens / frein
+//   GPIO8  / GPIO9  : EN (L298N) ou PWM (LMD18200)      vitesse (PWM)
+#define TROIS_FILS_PAR_MOTEUR (DRIVER_MOTEUR != DRIVER_TB6612)
 
 #if defined(ARDUINO_XIAO_ESP32S3)
 // ---------- Ancienne carte : Seeed XIAO ESP32S3 (carte "XIAO_ESP32S3") ----------
@@ -170,7 +180,7 @@ const int PIN_ROUE_D_PWM_AR = 5;  // D4
 const int PIN_LED_STATUT    = 6;  // D5
 const int PIN_BATTERIE_ADC  = 7;  // D8
 const int PIN_COURANT_ADC   = 8;  // D9
-#if DRIVER_L298
+#if TROIS_FILS_PAR_MOTEUR
 const int PIN_ROUE_G_EN = 3;      // D2 -> EN de M1 (carte L298N)
 const int PIN_ROUE_D_EN = 9;      // D10 -> EN de M2
 const BrocheGps BROCHES_GPS[] = { { 44, "D7" }, { 43, "D6" } }; // D2 et D10 servent aux EN
@@ -182,14 +192,14 @@ const BrocheGps BROCHES_GPS[] = { { 44, "D7" }, { 43, "D6" }, { 3, "D2" }, { 9, 
 #else
 // ---------- Carte du robot : ESP32-S3 N16R8 DevKitC-1 (carte "ESP32S3 Dev Module") ----------
 const char* NOM_CARTE = "ESP32-S3 N16R8";
-#if DRIVER_L298
-// Carte L298N (connecteur P3 "Commande moteur") : M1 = roue gauche (P2), M2 = roue droite (P4)
-const int PIN_ROUE_G_PWM_AV = 15; // -> I1 de M1 (fil jaune)  sens
-const int PIN_ROUE_G_PWM_AR = 16; // -> I2 de M1 (fil vert)   sens
-const int PIN_ROUE_D_PWM_AV = 17; // -> I1 de M2 (fil jaune)  sens
-const int PIN_ROUE_D_PWM_AR = 18; // -> I2 de M2 (fil vert)   sens
-const int PIN_ROUE_G_EN     = 8;  // -> EN de M1 (fil blanc)  vitesse (PWM)
-const int PIN_ROUE_D_EN     = 9;  // -> EN de M2 (fil blanc)  vitesse (PWM)
+#if TROIS_FILS_PAR_MOTEUR
+// L298N : M1 = roue gauche (P2), M2 = roue droite (P4). LMD18200 : un module par roue.
+const int PIN_ROUE_G_PWM_AV = 15; // roue gauche : I1 de M1 (L298N)  ou DIR   (LMD18200 gauche)
+const int PIN_ROUE_G_PWM_AR = 16; // roue gauche : I2 de M1 (L298N)  ou BRAKE (LMD18200 gauche)
+const int PIN_ROUE_D_PWM_AV = 17; // roue droite : I1 de M2 (L298N)  ou DIR   (LMD18200 droit)
+const int PIN_ROUE_D_PWM_AR = 18; // roue droite : I2 de M2 (L298N)  ou BRAKE (LMD18200 droit)
+const int PIN_ROUE_G_EN     = 8;  // roue gauche : EN de M1 (L298N)  ou PWM   (LMD18200 gauche)
+const int PIN_ROUE_D_EN     = 9;  // roue droite : EN de M2 (L298N)  ou PWM   (LMD18200 droit)
 #else
 // Driver TB6612FNG ou DRV8833 : 2 signaux PWM par moteur
 const int PIN_ROUE_G_PWM_AV = 15; // -> AIN1 (roue gauche, marche avant)
@@ -213,13 +223,17 @@ const BrocheGps BROCHES_GPS[] = {
 // Une roue tourne à l'envers ? Passer son INVERSER_ à true (au lieu d'intervertir les fils).
 const bool INVERSER_ROUE_G = false;
 const bool INVERSER_ROUE_D = false;
-#if DRIVER_L298
+#if DRIVER_MOTEUR == DRIVER_L298
 // Le L298N commute lentement : au-delà de quelques kHz il chauffe et perd de la puissance.
 // 1 kHz marche bien (léger sifflement des moteurs, normal).
 const uint32_t FREQUENCE_PWM_MOTEURS = 1000;
 // Le L298N "mange" environ 2 V : à faible puissance le moteur siffle sans tourner. Les petites
 // commandes sont donc ramenées au minimum utile (0 = désactivé, à régler entre 0 et 40 %).
 const int PUISSANCE_MIN_MOTEUR = 25;
+#elif DRIVER_MOTEUR == DRIVER_LMD18200
+// Le LMD18200 commute vite et perd très peu de tension : 20 kHz (inaudible), petite zone morte.
+const uint32_t FREQUENCE_PWM_MOTEURS = 20000;
+const int PUISSANCE_MIN_MOTEUR = 8;
 #else
 // 20 kHz : au-delà de l'audible (plus de sifflement des moteurs). OK pour TB6612 et DRV8833.
 const uint32_t FREQUENCE_PWM_MOTEURS = 20000;
@@ -441,7 +455,22 @@ int pwmDepuisPuissance(int pwr) {
   return map(a, 1, 100, PUISSANCE_MIN_MOTEUR * 255 / 100 + 1, 255);
 }
 
-#if DRIVER_L298
+#if DRIVER_MOTEUR == DRIVER_LMD18200
+// Module LMD18200T (mode "signe / amplitude" de la notice) :
+//   BRAKE=0, DIR=1, PWM -> avant     BRAKE=0, DIR=0, PWM -> arrière
+//   BRAKE=1, PWM=0 -> les 4 transistors sont coupés : roue libre
+void appliquerMoteur(int pwr, int pinDir, int pinBrake, int pinPwm) {
+  pwr = constrain(pwr, -100, 100);
+  if (pwr == 0) {
+    analogWrite(pinPwm, 0);
+    digitalWrite(pinBrake, HIGH);   // avec PWM à 0 : roue libre (pas de freinage brutal)
+    return;
+  }
+  digitalWrite(pinBrake, LOW);
+  digitalWrite(pinDir, pwr > 0 ? HIGH : LOW);
+  analogWrite(pinPwm, pwmDepuisPuissance(pwr));
+}
+#elif DRIVER_MOTEUR == DRIVER_L298
 // Carte L298N : I1/I2 donnent le sens, EN la vitesse (table de vérité du L298) :
 //   EN=PWM, I1=1, I2=0 -> avant     EN=PWM, I1=0, I2=1 -> arrière     EN=0 -> roue libre
 void appliquerMoteur(int pwr, int pinI1, int pinI2, int pinEn) {
@@ -474,7 +503,7 @@ void appliquerMoteur(int pwr, int pinPwmAvant, int pinPwmArriere) {
 #endif
 
 void appliquerCommandes(int pwrRoueG, int pwrRoueD) {
-#if DRIVER_L298
+#if TROIS_FILS_PAR_MOTEUR
   appliquerMoteur(INVERSER_ROUE_G ? -pwrRoueG : pwrRoueG, PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_G_EN);
   appliquerMoteur(INVERSER_ROUE_D ? -pwrRoueD : pwrRoueD, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR, PIN_ROUE_D_EN);
 #else
@@ -1122,8 +1151,8 @@ void testerMoteurs() {
     appliquerCommandes(0, 0);
     delay(500);
   }
-  Serial.println("[Test moteurs] Fini. Un moteur qui n'a pas bougé : vérifier son fil EN (blanc), "
-                 "l'alimentation Vcc de la carte (P1) et la masse commune avec l'ESP32.");
+  Serial.println("[Test moteurs] Fini. Un moteur qui n'a pas bougé : vérifier son fil EN / PWM, "
+                 "l'alimentation de la carte moteur et la masse commune avec l'ESP32.");
 }
 
 void repondreIdentification() {
@@ -1408,9 +1437,12 @@ void setup() {
   Serial.println();
   Serial.print("ID=");
   Serial.println(IDENTITE);
-#if DRIVER_L298
-  Serial.printf("Carte : %s — carte moteur L298N : M1 I1/I2/EN = GPIO %d/%d/%d, M2 I1/I2/EN = GPIO %d/%d/%d, LED GPIO %d, batterie GPIO %d, GPS %s\n",
-                NOM_CARTE, PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_G_EN, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR, PIN_ROUE_D_EN,
+#if TROIS_FILS_PAR_MOTEUR
+  Serial.printf("Carte : %s — %s : gauche %s = GPIO %d/%d/%d, droite = GPIO %d/%d/%d, LED GPIO %d, batterie GPIO %d, GPS %s\n",
+                NOM_CARTE,
+                DRIVER_MOTEUR == DRIVER_LMD18200 ? "modules LMD18200" : "carte moteur L298N",
+                DRIVER_MOTEUR == DRIVER_LMD18200 ? "DIR/BRAKE/PWM" : "I1/I2/EN",
+                PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_G_EN, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR, PIN_ROUE_D_EN,
                 PIN_LED_STATUT, PIN_BATTERIE_ADC, BROCHES_GPS[0].nom);
   Serial.println("Test des moteurs : taper t dans le Moniteur Série (robot sur cales !)");
 #else
@@ -1424,11 +1456,11 @@ void setup() {
   pinMode(PIN_ROUE_D_PWM_AV, OUTPUT);
   pinMode(PIN_ROUE_D_PWM_AR, OUTPUT);
   pinMode(PIN_LED_STATUT, OUTPUT);
-#if DRIVER_L298
+#if TROIS_FILS_PAR_MOTEUR
   pinMode(PIN_ROUE_G_EN, OUTPUT);
   pinMode(PIN_ROUE_D_EN, OUTPUT);
   appliquerCommandes(0, 0); // attache aussi les broches EN au PWM
-  for (int pin : { PIN_ROUE_G_EN, PIN_ROUE_D_EN }) { // seules les EN sont en PWM, I1/I2 restent en tout-ou-rien
+  for (int pin : { PIN_ROUE_G_EN, PIN_ROUE_D_EN }) { // seules EN / PWM sont en PWM, les autres restent en tout-ou-rien
 #else
   appliquerCommandes(0, 0); // attache aussi les broches au PWM
   for (int pin : { PIN_ROUE_G_PWM_AV, PIN_ROUE_G_PWM_AR, PIN_ROUE_D_PWM_AV, PIN_ROUE_D_PWM_AR }) {

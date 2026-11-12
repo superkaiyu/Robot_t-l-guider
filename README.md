@@ -62,7 +62,7 @@ Une roue tourne à l'envers ? Dans `robot.ino`, passe `INVERSER_ROUE_G` ou `INVE
 
 ### Carte de commande moteur L298N (GEII Angoulême, module R1)
 
-C'est la carte du robot (`#define DRIVER_L298 1` dans `robot.ino`). Le L298N contient deux ponts en H : **M1 = roue gauche** (sortie P2 « Moteur1 »), **M2 = roue droite** (sortie P4 « Moteur2 »). Pour chaque moteur, **EN** reçoit la PWM (la vitesse) et **I1 / I2** donnent le sens, comme dans la table de vérité du L298 :
+À choisir avec `#define DRIVER_MOTEUR DRIVER_L298` dans `robot.ino`. Le L298N contient deux ponts en H : **M1 = roue gauche** (sortie P2 « Moteur1 »), **M2 = roue droite** (sortie P4 « Moteur2 »). Pour chaque moteur, **EN** reçoit la PWM (la vitesse) et **I1 / I2** donnent le sens, comme dans la table de vérité du L298 :
 
 | EN | I1 | I2 | Moteur |
 |---|---|---|---|
@@ -100,7 +100,7 @@ Sur la DevKitC-1, GPIO15, 16, 17, 18 et 8 sont côte à côte sur le même bord 
 
 **Pour faire tourner un seul moteur** (premier essai) : P1 (6 V + GND), le fil de masse vers l'ESP32, les 3 fils de M1 (GPIO15 → I1, GPIO16 → I2, GPIO8 → EN) et le moteur sur P2. Robot sur cales, ouvrir le Moniteur Série (115200 bauds) et taper **`t`** : chaque moteur tourne 1,5 s en avant puis 1,5 s en arrière à 60 %. Ensuite, piloter depuis l'IHM.
 
-**Autre driver** : avec un petit TB6612FNG ou DRV8833, mettre `#define DRIVER_L298 0` : GPIO15/16 → AIN1/AIN2 (roue gauche), GPIO17/18 → BIN1/BIN2 (roue droite), PWM à 20 kHz, VCC/STBY/PWMA/PWMB (TB6612) ou nSLEEP (DRV8833) au 3V3.
+**Autre driver** : avec un petit TB6612FNG ou DRV8833, mettre `#define DRIVER_MOTEUR DRIVER_TB6612` : GPIO15/16 → AIN1/AIN2 (roue gauche), GPIO17/18 → BIN1/BIN2 (roue droite), PWM à 20 kHz, VCC/STBY/PWMA/PWMB (TB6612) ou nSLEEP (DRV8833) au 3V3.
 
 Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON BRANCHÉE » (pas d'alarme).
 
@@ -113,6 +113,25 @@ Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON B
 - avec `lister_esp32.bat` : `COM5  ROBOT … GPS : module OK, recherche des satellites — branché sur GPIO14 à 9600 bauds`.
 
 Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection, `t` tester les moteurs un par un.
+
+### Modules LMD18200T (un par roue)
+
+Réglage actuel du programme : `#define DRIVER_MOTEUR DRIVER_LMD18200`. Le LMD18200T est un pont en H complet (3 A, jusqu'à 55 V) : il faut **un module par roue**. Les broches de l'ESP32 sont les mêmes que pour la carte L298N, seuls leurs rôles changent.
+
+| Signal du module | Roue gauche | Roue droite | Rôle |
+|---|---|---|---|
+| DIR (patte 3 du LMD18200) | **GPIO15** | **GPIO17** | sens : 1 = avant, 0 = arrière |
+| BRAKE (patte 4) | **GPIO16** | **GPIO18** | 0 = roule, 1 avec PWM à 0 = roue libre |
+| PWM (patte 5) | **GPIO8** | **GPIO9** | vitesse |
+| GND (patte 7) | GND de l'ESP32 | GND de l'ESP32 | masse commune obligatoire |
+| VS (patte 6) | + 12 V | + 12 V | puissance des moteurs |
+| OUTPUT 1 et 2 (pattes 2 et 10) | moteur gauche | moteur droit | |
+
+Pattes du LMD18200T (boîtier à 11 pattes, marquage face à soi, de gauche à droite) : 1 bootstrap 1 · 2 sortie 1 · 3 DIR · 4 BRAKE · 5 PWM · 6 VS · 7 GND · 8 mesure de courant · 9 alarme température · 10 sortie 2 · 11 bootstrap 2. Les deux condensateurs bleus (10 nF, pattes 1-2 et 10-11) sont déjà soudés sur le module. Pour savoir quel point des connecteurs du module va à quelle patte, lire la sérigraphie ou tester au multimètre (mode bip, module débranché).
+
+**Alimentation** : VS entre 12 et 55 V. En dessous d'environ 10 V, le LMD18200 se coupe tout seul (protection). Une batterie 3S chargée (11 à 12,6 V) convient ; pour les tests, une alimentation de labo à 12 V limitée à 1 ou 2 A. Les moteurs reçoivent presque toute la tension : avec des moteurs 6 V, garder « Puissance max » à 50 % au plus dans l'IHM.
+
+**À savoir** : les entrées acceptent le 3,3 V de l'ESP32 (niveau haut dès 2 V). PWM à 20 kHz, inaudible. À l'arrêt, le programme met BRAKE à 1 et PWM à 0 : roue libre. Mesure de courant facultative : la patte 8 sort 377 µA par ampère dans la résistance du module ; reliée à GPIO2, régler `COURANT_AMPERES_PAR_VOLT = 1 / (0.000377 × R)` (par exemple 1,2 pour R = 2,2 kΩ). Test : taper `t` dans le Moniteur Série, robot sur cales.
 
 ### ESP32 Manette : Seeed XIAO ESP32S3
 
