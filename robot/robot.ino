@@ -1136,6 +1136,7 @@ void diffuserTelemetrieWs() {
 // Commandes du Moniteur Série :  ?  identité + état du GPS   g  trames GPS brutes (marche/arrêt)
 //                                 d  relancer la détection du GPS
 //                                 t  tester les moteurs un par un (robot sur cales)
+//                                 m  état des moteurs (qui commande, valeurs, broches)
 // Test des moteurs sans IHM ni manette (commande "t" du Moniteur Série) : chaque moteur
 // tourne 1,5 s dans un sens, puis 1,5 s dans l'autre, à 60 %. Le robot doit être sur cales.
 void testerMoteurs() {
@@ -1155,6 +1156,31 @@ void testerMoteurs() {
                  "l'alimentation de la carte moteur et la masse commune avec l'ESP32.");
 }
 
+// Diagnostic (commande "m") : qui commande les roues, quelles valeurs, et l'état des broches.
+// Si une roue tourne alors qu'ici tout est à 0, le problème est dans le câblage ou la carte moteur.
+void afficherEtatMoteurs() {
+  const char* modes[] = { "TB6612 / DRV8833", "carte L298N", "modules LMD18200" };
+  Serial.printf("[Moteurs] Mode du programme : %s (DRIVER_MOTEUR dans robot.ino)\n", modes[DRIVER_MOTEUR]);
+  Serial.printf("[Moteurs] Pilote : %s   puissance appliquée : gauche %d %%, droite %d %%\n",
+                NOMS_PILOTES[piloteActuel], dernierPwrRoueG, dernierPwrRoueD);
+  Serial.printf("[Moteurs] Dernière commande manette : gauche %d, droite %d (il y a %lu ms)%s\n",
+                cmdManette.rg, cmdManette.rd, cmdManette.recue ? millis() - cmdManette.ms : 0UL,
+                cmdManette.recue ? "" : " - jamais reçue");
+  Serial.printf("[Moteurs] Dernière commande IHM     : gauche %d, droite %d (il y a %lu ms)%s\n",
+                cmdIhm.rg, cmdIhm.rd, cmdIhm.recue ? millis() - cmdIhm.ms : 0UL, cmdIhm.recue ? "" : " - jamais reçue");
+#if TROIS_FILS_PAR_MOTEUR
+  const char* n1 = DRIVER_MOTEUR == DRIVER_LMD18200 ? "DIR" : "I1";
+  const char* n2 = DRIVER_MOTEUR == DRIVER_LMD18200 ? "BRAKE" : "I2";
+  const char* n3 = DRIVER_MOTEUR == DRIVER_LMD18200 ? "PWM" : "EN";
+  Serial.printf("[Moteurs] Roue gauche : %s (GPIO%d) = %d, %s (GPIO%d) = %d, %s (GPIO%d) = %d %%\n",
+                n1, PIN_ROUE_G_PWM_AV, digitalRead(PIN_ROUE_G_PWM_AV), n2, PIN_ROUE_G_PWM_AR, digitalRead(PIN_ROUE_G_PWM_AR),
+                n3, PIN_ROUE_G_EN, abs(dernierPwrRoueG));
+  Serial.printf("[Moteurs] Roue droite : %s (GPIO%d) = %d, %s (GPIO%d) = %d, %s (GPIO%d) = %d %%\n",
+                n1, PIN_ROUE_D_PWM_AV, digitalRead(PIN_ROUE_D_PWM_AV), n2, PIN_ROUE_D_PWM_AR, digitalRead(PIN_ROUE_D_PWM_AR),
+                n3, PIN_ROUE_D_EN, abs(dernierPwrRoueD));
+#endif
+}
+
 void repondreIdentification() {
   while (Serial.available() > 0) {
     int c = Serial.read();
@@ -1168,6 +1194,8 @@ void repondreIdentification() {
       lancerDetectionGps("demandée depuis le Moniteur Série", true);
     } else if (c == 't') {
       testerMoteurs();
+    } else if (c == 'm') {
+      afficherEtatMoteurs();
     }
   }
 }
@@ -1481,7 +1509,7 @@ void setup() {
     Serial.println("[Journal] Pas d'espace de fichiers dans la flash : choisir le schéma de partition "
                    "« Huge APP » dans l'Arduino IDE. Le robot fonctionne, mais n'enregistre pas les sessions.");
   }
-  Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS, t = tester les moteurs");
+  Serial.println("Commandes série : ? = identité + GPS, g = trames GPS brutes, d = relancer la détection du GPS, t = tester les moteurs, m = état des moteurs");
   memoireGps.begin("gps", false);
   lancerDetectionGps("démarrage", true); // ouvre l'UART du GPS sur la broche/vitesse à essayer
 

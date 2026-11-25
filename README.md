@@ -112,7 +112,7 @@ Sans batterie branchée sur le pont diviseur, l'IHM affiche la batterie « NON B
 - dans l'IHM, onglet **GPS** (« Branché sur : GPIO14 · 9600 bauds »), avec un bouton **Relancer la détection du GPS** ;
 - avec `lister_esp32.bat` : `COM5  ROBOT … GPS : module OK, recherche des satellites — branché sur GPIO14 à 9600 bauds`.
 
-Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection, `t` tester les moteurs un par un.
+Commandes à taper dans le Moniteur Série du robot (115200 bauds) : `?` identité + état du GPS, `g` afficher les trames GPS brutes (marche/arrêt), `d` relancer la détection, `t` tester les moteurs un par un, `m` afficher l'état des moteurs (qui commande, valeurs envoyées, état des broches).
 
 ### Modules LMD18200T (un par roue)
 
