@@ -994,6 +994,11 @@ void construireTelemetrie(String& t) {
   jsonChampTexte(t, "staIp", etatSta == STA_CONNECTE ? WiFi.localIP().toString() : String(""));
   jsonChampInt(t, "uptime", (long)(millis() / 1000));
   jsonChampTexte(t, "carte", NOM_CARTE);
+  { // driver moteur et date du programme : l'IHM les affiche pour vérifier quelle version tourne
+    const char* drivers[] = { "TB6612", "L298N", "LMD18200" };
+    jsonChampTexte(t, "driver", String(drivers[DRIVER_MOTEUR]) + (SIGNAUX_MOTEURS_INVERSES ? " inversé" : ""));
+    jsonChampTexte(t, "firmware", __DATE__ " " __TIME__);
+  }
   jsonChampInt(t, "session", (long)journal.numero());
   jsonChampBool(t, "journalDispo", journal.disponible());
   jsonChampBool(t, "journalPlein", journal.plein());

@@ -710,6 +710,8 @@
                 if (data.uptime !== undefined) t += ` · robot allumé depuis ${Math.floor(data.uptime / 60)} min ${data.uptime % 60} s`;
                 if (data.session) t += ` · session n°${data.session}${data.journalDispo === false ? ' (non enregistrée)' : ''}`;
                 if (data.carte) { t = `${data.carte} · ` + t; $('label-carte').textContent = `${data.carte} · roues · GPS · WiFi`; }
+                if (data.driver) t += ` · moteurs : ${data.driver}`;
+                if (data.firmware) t += ` · programme du ${data.firmware}`;
                 $('reseau-info').textContent = t;
             }
             if (data.pilote !== undefined) { afficherPilote(data.pilote); piloteRobot = data.pilote; }
