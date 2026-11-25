@@ -127,6 +127,8 @@ Réglage actuel du programme : `#define DRIVER_MOTEUR DRIVER_LMD18200`. Le LMD18
 | VS (patte 6) | + 12 V | + 12 V | puissance des moteurs |
 | OUTPUT 1 et 2 (pattes 2 et 10) | moteur gauche | moteur droit | |
 
+**Connecteurs du module** (sérigraphie) : à gauche **GND · VCC · GND** (alimentation 12 V), en bas **MOTEUR** (2 points), à droite **PWM · BRK · DIR** (commande). Le connecteur de commande n'a pas de masse : un **GND du connecteur d'alimentation doit aussi aller au GND de l'ESP32**. Chaque module a son propre connecteur d'alimentation : les deux modules sont alimentés **en parallèle** (le connecteur GND · VCC · GND de la carte interface n'en alimente qu'un).
+
 Pattes du LMD18200T (boîtier à 11 pattes, marquage face à soi, de gauche à droite) : 1 bootstrap 1 · 2 sortie 1 · 3 DIR · 4 BRAKE · 5 PWM · 6 VS · 7 GND · 8 mesure de courant · 9 alarme température · 10 sortie 2 · 11 bootstrap 2. Les deux condensateurs bleus (10 nF, pattes 1-2 et 10-11) sont déjà soudés sur le module. Pour savoir quel point des connecteurs du module va à quelle patte, lire la sérigraphie ou tester au multimètre (mode bip, module débranché).
 
 **Alimentation** : VS entre 12 et 55 V. En dessous d'environ 10 V, le LMD18200 se coupe tout seul (protection). Une batterie 3S chargée (11 à 12,6 V) convient ; pour les tests, une alimentation de labo à 12 V limitée à 1 ou 2 A. Les moteurs reçoivent presque toute la tension : avec des moteurs 6 V, garder « Puissance max » à 50 % au plus dans l'IHM.
