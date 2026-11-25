@@ -449,6 +449,14 @@ void mettreAJourLed() {
 // MOTEURS
 // =========================================================
 // Puissance -100..100 % -> rapport cyclique 0..255, en sautant la zone où le moteur ne tourne pas
+// Signaux vers la carte moteur. Si une carte intermédiaire les INVERSE (étage à transistor de la
+// carte interface par exemple), mettre SIGNAUX_MOTEURS_INVERSES à true : 1 devient 0 et la PWM
+// est complémentée (un rapport de 30 % devient 70 %). Vérification : commande "m" au repos et
+// multimètre sur le module (BRK doit être à l'état haut, PWM à 0 V).
+const bool SIGNAUX_MOTEURS_INVERSES = false;
+void sortieMoteur(int pin, bool niveau) { digitalWrite(pin, niveau != SIGNAUX_MOTEURS_INVERSES ? HIGH : LOW); }
+void pwmMoteur(int pin, int rapport) { analogWrite(pin, SIGNAUX_MOTEURS_INVERSES ? 255 - rapport : rapport); }
+
 int pwmDepuisPuissance(int pwr) {
   int a = abs(constrain(pwr, -100, 100));
   if (a == 0) return 0;
@@ -462,13 +470,13 @@ int pwmDepuisPuissance(int pwr) {
 void appliquerMoteur(int pwr, int pinDir, int pinBrake, int pinPwm) {
   pwr = constrain(pwr, -100, 100);
   if (pwr == 0) {
-    analogWrite(pinPwm, 0);
-    digitalWrite(pinBrake, HIGH);   // avec PWM à 0 : roue libre (pas de freinage brutal)
+    pwmMoteur(pinPwm, 0);
+    sortieMoteur(pinBrake, true);   // avec PWM à 0 : roue libre (pas de freinage brutal)
     return;
   }
-  digitalWrite(pinBrake, LOW);
-  digitalWrite(pinDir, pwr > 0 ? HIGH : LOW);
-  analogWrite(pinPwm, pwmDepuisPuissance(pwr));
+  sortieMoteur(pinBrake, false);
+  sortieMoteur(pinDir, pwr > 0);
+  pwmMoteur(pinPwm, pwmDepuisPuissance(pwr));
 }
 #elif DRIVER_MOTEUR == DRIVER_L298
 // Carte L298N : I1/I2 donnent le sens, EN la vitesse (table de vérité du L298) :
@@ -476,28 +484,28 @@ void appliquerMoteur(int pwr, int pinDir, int pinBrake, int pinPwm) {
 void appliquerMoteur(int pwr, int pinI1, int pinI2, int pinEn) {
   pwr = constrain(pwr, -100, 100);
   if (pwr == 0) {
-    analogWrite(pinEn, 0);          // EN à 0 : moteur libre (pas de freinage brutal)
-    digitalWrite(pinI1, LOW);
-    digitalWrite(pinI2, LOW);
+    pwmMoteur(pinEn, 0);          // EN à 0 : moteur libre (pas de freinage brutal)
+    sortieMoteur(pinI1, false);
+    sortieMoteur(pinI2, false);
     return;
   }
-  digitalWrite(pinI1, pwr > 0 ? HIGH : LOW);
-  digitalWrite(pinI2, pwr > 0 ? LOW : HIGH);
-  analogWrite(pinEn, pwmDepuisPuissance(pwr));
+  sortieMoteur(pinI1, pwr > 0);
+  sortieMoteur(pinI2, !(pwr > 0));
+  pwmMoteur(pinEn, pwmDepuisPuissance(pwr));
 }
 #else
 void appliquerMoteur(int pwr, int pinPwmAvant, int pinPwmArriere) {
   pwr = constrain(pwr, -100, 100);
   int pwm = pwmDepuisPuissance(pwr);
   if (pwr > 0) {
-    analogWrite(pinPwmAvant, pwm);
-    analogWrite(pinPwmArriere, 0);
+    pwmMoteur(pinPwmAvant, pwm);
+    pwmMoteur(pinPwmArriere, 0);
   } else if (pwr < 0) {
-    analogWrite(pinPwmAvant, 0);
-    analogWrite(pinPwmArriere, pwm);
+    pwmMoteur(pinPwmAvant, 0);
+    pwmMoteur(pinPwmArriere, pwm);
   } else {
-    analogWrite(pinPwmAvant, 0);
-    analogWrite(pinPwmArriere, 0);
+    pwmMoteur(pinPwmAvant, 0);
+    pwmMoteur(pinPwmArriere, 0);
   }
 }
 #endif
@@ -1160,7 +1168,8 @@ void testerMoteurs() {
 // Si une roue tourne alors qu'ici tout est à 0, le problème est dans le câblage ou la carte moteur.
 void afficherEtatMoteurs() {
   const char* modes[] = { "TB6612 / DRV8833", "carte L298N", "modules LMD18200" };
-  Serial.printf("[Moteurs] Mode du programme : %s (DRIVER_MOTEUR dans robot.ino)\n", modes[DRIVER_MOTEUR]);
+  Serial.printf("[Moteurs] Mode du programme : %s (DRIVER_MOTEUR dans robot.ino)%s\n", modes[DRIVER_MOTEUR],
+                SIGNAUX_MOTEURS_INVERSES ? ", signaux INVERSÉS" : "");
   Serial.printf("[Moteurs] Pilote : %s   puissance appliquée : gauche %d %%, droite %d %%\n",
                 NOMS_PILOTES[piloteActuel], dernierPwrRoueG, dernierPwrRoueD);
   Serial.printf("[Moteurs] Dernière commande manette : gauche %d, droite %d (il y a %lu ms)%s\n",
